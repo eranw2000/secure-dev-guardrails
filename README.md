@@ -7,6 +7,10 @@ hybrid enforcement model (hard-block the unambiguous violations, warn on judgmen
 The design rests on three rings, because no single mechanism can "ensure" compliance. See
 [docs/three-ring-model.md](docs/three-ring-model.md).
 
+![The three-ring model](docs/three-ring-flow.png)
+
+Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in draw.io).
+
 ## Layout
 
 - `standards/`, the single source of truth. Security rules (SEC-*), privacy rules (PRIV-*,

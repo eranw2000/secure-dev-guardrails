@@ -1,0 +1,56 @@
+# Org privacy rules for semgrep, anchored to privacy-standards.md rule IDs. These catch the
+# PII-in-logs cases at the repo level (the CI mirror of the pii-in-logs.sh hook) plus a few
+# data-flow-lite patterns. The deeper judgment calls (retention, deletion-path reachability,
+# subject-rights plumbing) are not regexable and belong to the privacy-review skill + DPO.
+
+rules:
+  - id: PRIV-LOG-01-python-pii-in-log
+    languages: [python]
+    severity: ERROR
+    message: >
+      PRIV-LOG-01: personal data must not be written to logs. Log a hashed/tokenized surrogate,
+      not the raw identifier. See privacy-standards.md.
+    patterns:
+      - pattern-either:
+          - pattern: $LOG.info(..., $OBJ.email, ...)
+          - pattern: $LOG.debug(..., $OBJ.email, ...)
+          - pattern: $LOG.warning(..., $OBJ.email, ...)
+          - pattern: $LOG.info(..., $OBJ.ssn, ...)
+          - pattern: $LOG.info(..., $OBJ.phone, ...)
+          - pattern: logging.$M(f"...{$OBJ.email}...")
+          - pattern: logging.$M(f"...{$OBJ.phone}...")
+          - pattern: logging.$M(f"...{$OBJ.ssn}...")
+          - pattern: print(..., $OBJ.email, ...)
+
+  - id: PRIV-LOG-01-js-pii-in-log
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      PRIV-LOG-01: personal data must not be logged or sent to analytics. Use a surrogate id.
+      See privacy-standards.md.
+    patterns:
+      - pattern-either:
+          - pattern: console.$M(..., $OBJ.email, ...)
+          - pattern: console.$M(..., $OBJ.phone, ...)
+          - pattern: console.$M(..., $OBJ.ssn, ...)
+          - pattern: logger.$M(..., $OBJ.email, ...)
+          - pattern: analytics.track(..., $OBJ.email, ...)
+
+  - id: PRIV-LOG-02-error-tracker-pii
+    languages: [python, javascript, typescript]
+    severity: WARNING
+    message: >
+      PRIV-LOG-02: avoid attaching personal data to error-tracker context/extra. It ships to a
+      third party. Attach a subject reference, not the raw value. See privacy-standards.md.
+    pattern-either:
+      - pattern: $S.set_extra(..., $OBJ.email, ...)
+      - pattern: $S.setExtra(..., $OBJ.email, ...)
+      - pattern: $S.setContext(..., $OBJ.email, ...)
+
+  - id: PRIV-ANON-01-ssn-literal-in-source
+    languages: [python, javascript, typescript, java]
+    severity: WARNING
+    message: >
+      PRIV-ANON-01: a literal that looks like a real SSN in source/fixtures. Use synthetic data.
+      Suppress in baseline.yml if this is a known non-PII constant. See privacy-standards.md.
+    pattern-regex: '\b\d{3}-\d{2}-\d{4}\b'

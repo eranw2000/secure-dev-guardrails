@@ -1,0 +1,30 @@
+{
+  "_comment": "Enterprise managed policy settings for Claude Code. This file takes precedence over user and project settings and CANNOT be overridden or disabled by a developer. That is what turns the security/privacy hooks from advisory-on-my-machine into non-bypassable org policy. Install it to the OS managed-settings path via settings/install.sh (run by IT/MDM). Hook paths assume the guardrails are installed at /usr/local/share/secure-dev-guardrails; install.sh keeps the two in sync.",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "/usr/local/share/secure-dev-guardrails/hooks/secret-scan.sh" },
+          { "type": "command", "command": "/usr/local/share/secure-dev-guardrails/hooks/pii-in-logs.sh" }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "/usr/local/share/secure-dev-guardrails/hooks/secret-scan.sh" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "/usr/local/share/secure-dev-guardrails/hooks/sensitive-file-context.sh" },
+          { "type": "command", "command": "/usr/local/share/secure-dev-guardrails/hooks/dangerous-pattern-warn.sh" }
+        ]
+      }
+    ]
+  }
+}

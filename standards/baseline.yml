@@ -1,0 +1,40 @@
+# Suppression / accepted-risk baseline.
+#
+# A finding listed here is suppressed by the hooks, review skills, and CI gate. Use it for
+# false positives and for risks an owner has consciously accepted for a bounded time. Every
+# entry needs an owner and an expiry so suppressions do not become permanent blind spots.
+#
+# CI fails if an entry is past its `expires` date, so stale suppressions surface instead of
+# silently rotting. Re-justify and extend, or remove and fix.
+#
+# Match precedence: a finding is suppressed when its rule_id matches AND (path glob matches OR
+# fingerprint matches). Prefer fingerprint for a single specific line; use path for a known
+# false-positive pattern across a file.
+
+version: 1
+
+suppressions:
+  # --- Example entries (remove before first real use) ---
+
+  - rule_id: SEC-SECRET-01
+    # A documented public test key, not a live credential.
+    path: "tests/fixtures/sample_public_key.pem"
+    reason: "Public half of a throwaway keypair used only in unit tests. Confirmed no private material."
+    owner: "security-team"
+    approved: "2026-06-10"
+    expires: "2026-12-10"
+
+  - rule_id: PRIV-LOG-01
+    fingerprint: "a1b2c3d4"   # stable hash of file+line+rule emitted by the tooling
+    reason: "The 'email' here is a literal support-inbox address (constant), not a data subject's email."
+    owner: "platform-team"
+    approved: "2026-06-10"
+    expires: "2026-09-10"
+
+# Rules for writing an entry:
+# - reason must explain WHY it is safe or accepted, not just restate the finding.
+# - owner is a team or person accountable for re-reviewing at expiry.
+# - expires is required and must be a real date; max horizon is 180 days. Renew, do not extend
+#   indefinitely.
+# - No blanket wildcards on Blocker rules (e.g. `path: "**"` on SEC-SECRET-01 is rejected by
+#   the baseline validator).

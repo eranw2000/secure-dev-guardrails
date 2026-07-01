@@ -1,0 +1,14 @@
+secure-dev-guardrails
+Copyright (c) 2026 Eran Wyler
+
+All skills, hooks, standards, CI configuration, and docs in this repository are
+original to this project. The MIT License in LICENSE applies to all of them.
+
+The semgrep rule packs referenced in ci/ (p/secrets, p/owasp-top-ten, p/python,
+p/javascript, p/java) and tools invoked by the CI workflow (gitleaks, semgrep,
+pip-audit) are external, separately licensed projects that this workflow calls;
+they are not redistributed here.
+
+The skills/enhancements/ files are drop-in specification notes for review skills
+or plugins you already use (for example a security-review skill or a third-party
+security plugin). Those tools are external and not included in this repository.

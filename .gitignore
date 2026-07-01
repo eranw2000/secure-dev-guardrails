@@ -1,0 +1,19 @@
+.idea/
+.vscode/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+.venv/
+venv/
+env/
+node_modules/
+*.log
+
+# AI-assistant harness files (do not ship personal working notes)
+CLAUDE.md
+CLAUDE.local.md
+MEMORY.md
+AGENTS.md
+.claude/
+.cursor/

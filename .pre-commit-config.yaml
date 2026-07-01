@@ -1,0 +1,34 @@
+# Pre-commit hooks: the same checks as the Claude Code hooks, but at `git commit` time for any
+# editor. A developer not using Claude Code still gets caught here, and CI is the final net.
+#
+# Install once per clone:  pipx install pre-commit && pre-commit install
+# Run on all files:        pre-commit run --all-files
+#
+# This complements (does not replace) the CI workflow in ci/security-privacy.yml. CI is the
+# gate that cannot be skipped; pre-commit is the fast local feedback that mirrors it.
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+        # SEC-SECRET-01/02: hardcoded credentials and credential files.
+
+  - repo: https://github.com/semgrep/semgrep
+    rev: v1.78.0
+    hooks:
+      - id: semgrep
+        name: semgrep (org security + privacy rules)
+        args:
+          - "--config=ci/semgrep/security.yml"
+          - "--config=ci/semgrep/privacy.yml"
+          - "--error"
+          - "--skip-unknown-extensions"
+
+  - repo: local
+    hooks:
+      - id: block-credential-files
+        name: block credential files (SEC-SECRET-02)
+        entry: ci/check-credential-files.sh
+        language: script
+        pass_filenames: true

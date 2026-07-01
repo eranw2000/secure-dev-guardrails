@@ -1,0 +1,79 @@
+# Org security rules for semgrep, anchored to security-standards.md rule IDs. These are the
+# cross-file / AST checks that the single-file shell hooks cannot do reliably. They run in CI
+# and pre-commit. The curated registry packs (p/owasp-top-ten, p/secrets, p/python, ...) cover
+# the long tail; these are the company-specific, ID-anchored rules.
+
+rules:
+  - id: SEC-INJ-01-python-sql-fstring
+    languages: [python]
+    severity: ERROR
+    message: >
+      SEC-INJ-01: SQL built with an f-string or .format() lets untrusted input change the query.
+      Use a parameterized query (cursor.execute(sql, params)). See security-standards.md.
+    patterns:
+      - pattern-either:
+          - pattern: $CUR.execute(f"...", ...)
+          - pattern: $CUR.execute("...".format(...), ...)
+          - pattern: $CUR.executemany(f"...", ...)
+
+  - id: SEC-INJ-02-python-shell-true
+    languages: [python]
+    severity: ERROR
+    message: >
+      SEC-INJ-02: subprocess with shell=True on dynamic input allows command injection.
+      Pass an argument vector and shell=False. See security-standards.md.
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.run(..., shell=True, ...)
+          - pattern: subprocess.call(..., shell=True, ...)
+          - pattern: subprocess.Popen(..., shell=True, ...)
+          - pattern: os.system(...)
+
+  - id: SEC-CRYPTO-01-python-tls-verify-off
+    languages: [python]
+    severity: ERROR
+    message: >
+      SEC-CRYPTO-01: TLS verification disabled (verify=False). This silently accepts any
+      certificate. Remove it or pin a CA bundle. See security-standards.md.
+    pattern-either:
+      - pattern: requests.$M(..., verify=False, ...)
+      - pattern: httpx.$M(..., verify=False, ...)
+
+  - id: SEC-WEB-01-js-innerhtml
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >
+      SEC-WEB-01: assigning untrusted data to innerHTML enables DOM XSS. Use textContent or a
+      sanitizer (DOMPurify). See security-standards.md.
+    pattern-either:
+      - pattern: $EL.innerHTML = $X
+      - pattern: $EL.insertAdjacentHTML(...)
+
+  - id: SEC-INJ-02-js-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      SEC-INJ-02: eval / new Function on dynamic input is code injection. Remove it.
+      See security-standards.md.
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+
+  - id: SEC-INJ-03-java-deserialization
+    languages: [java]
+    severity: ERROR
+    message: >
+      SEC-INJ-03: native deserialization of untrusted bytes (readObject / XMLDecoder) enables
+      RCE. Use a safe format (JSON with a typed mapper). See security-standards.md.
+    pattern-either:
+      - pattern: (ObjectInputStream $O).readObject()
+      - pattern: new XMLDecoder(...)
+
+  - id: SEC-INJ-01-java-statement-concat
+    languages: [java]
+    severity: ERROR
+    message: >
+      SEC-INJ-01: SQL via Statement with string concatenation is injectable. Use a
+      PreparedStatement with bind parameters. See security-standards.md.
+    patterns:
+      - pattern: $STMT.executeQuery("..." + $X)

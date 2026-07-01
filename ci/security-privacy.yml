@@ -1,0 +1,161 @@
+name: security-privacy
+
+# Reusable GitHub Actions workflow: the server-side backstop.
+#
+# This is the ring that actually blocks a merge. It does not depend on a developer using
+# Claude Code, so it catches anyone who edits in a plain editor and pushes. It mirrors the
+# local hooks (secret scan) and adds the checks that need a real toolchain (SAST, SCA).
+#
+# Wire it from a repo's own workflow:
+#
+#   # .github/workflows/security.yml
+#   name: security-privacy
+#   on:
+#     pull_request:
+#     push:
+#       branches: [main, master]
+#   jobs:
+#     guardrails:
+#       uses: <org>/secure-dev-guardrails/.github/workflows/security-privacy.yml@v1
+#       with:
+#         languages: "python,javascript,java"   # subset that applies to this repo
+#         enforce: "block"                       # block | warn  (rollout dial)
+#
+# Then make the "guardrails" check Required in branch protection. enforce: warn lets a team
+# adopt without failing builds on day one; flip to block once the baseline is clean.
+#
+# The rollout dial is uniform: every scanning step runs continue-on-error in warn mode, so a
+# finding is annotated but never fails the build; in block mode the step failure fails the job.
+
+on:
+  workflow_call:
+    inputs:
+      languages:
+        description: "Comma list: python, javascript, java"
+        type: string
+        default: "python,javascript,java"
+      enforce:
+        description: "block (fail on Blocker findings) or warn (report only)"
+        type: string
+        default: "block"
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # gitleaks needs full history on push
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+        # Mirrors SEC-SECRET-01/02. Fails the job on any finding when enforce=block.
+        continue-on-error: ${{ inputs.enforce == 'warn' }}
+
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: semgrep
+        shell: bash
+        # The old returntocorp/semgrep-action is deprecated; run the current CLI directly so
+        # this stays self-contained and needs no Semgrep App token. --error exits non-zero on a
+        # finding; the enforce dial is handled by continue-on-error below, not inline.
+        env:
+          SEMGREP_TIMEOUT: "300"
+        run: |
+          pipx run semgrep scan \
+            --config ci/semgrep/security.yml \
+            --config ci/semgrep/privacy.yml \
+            --config p/secrets \
+            --config p/owasp-top-ten \
+            --config p/python \
+            --config p/javascript \
+            --config p/java \
+            --error --disable-version-check
+        continue-on-error: ${{ inputs.enforce == 'warn' }}
+
+  pii-scan:
+    # Mirrors PRIV-LOG-01 / PRIV-ANON-01 at the repo level: a quick grep net for PII tokens in
+    # committed fixtures. The semgrep privacy pack (in the sast job) does the deeper AST checks.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: pii grep net
+        shell: bash
+        continue-on-error: ${{ inputs.enforce == 'warn' }}
+        run: |
+          set -uo pipefail
+          PATTERN_SSN='[0-9]{3}-[0-9]{2}-[0-9]{4}'
+          hits=$(grep -RInE "$PATTERN_SSN" --include='*.json' --include='*.csv' --include='*.sql' \
+                 --include='*.py' --include='*.js' --include='*.ts' --include='*.java' . \
+                 | grep -vE '/(node_modules|\.git|vendor)/' || true)
+          if [ -n "$hits" ]; then
+            echo "Possible real PII (SSN pattern) in committed files (PRIV-ANON-01):"
+            echo "$hits"
+            exit 1
+          fi
+
+  dependency-scan:
+    # SEC-DEP-01: known-CVE dependencies. Each language step is a no-op if its manifest is absent
+    # and honors the enforce dial via continue-on-error.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: python pip-audit
+        shell: bash
+        continue-on-error: ${{ inputs.enforce == 'warn' }}
+        run: |
+          set -uo pipefail
+          rc=0
+          reqs=$(find . -name 'requirements*.txt' -not -path '*/node_modules/*' -not -path '*/.git/*')
+          if [ -n "$reqs" ]; then
+            while IFS= read -r r; do pipx run pip-audit -r "$r" || rc=1; done <<< "$reqs"
+          elif [ -f pyproject.toml ]; then
+            pipx run pip-audit || rc=1
+          else
+            echo "no python manifests, skipping"
+          fi
+          exit $rc
+      - name: node npm audit
+        shell: bash
+        continue-on-error: ${{ inputs.enforce == 'warn' }}
+        run: |
+          if [ -f package-lock.json ] || [ -f pnpm-lock.yaml ]; then
+            npm audit --audit-level=high
+          else
+            echo "no node lockfile, skipping"
+          fi
+      - name: java/maven owasp dependency-check
+        shell: bash
+        run: |
+          if [ -f pom.xml ]; then
+            echo "Run OWASP dependency-check via the maven plugin in the repo's own build;"
+            echo "this placeholder keeps the job green when no pom.xml is present."
+          fi
+
+  baseline-freshness:
+    # Fails if standards/baseline.yml has an expired suppression, so accepted-risk entries
+    # cannot rot silently past their review date.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check baseline expiries
+        shell: bash
+        run: |
+          set -uo pipefail
+          f="standards/baseline.yml"
+          [ -f "$f" ] || { echo "no baseline.yml, skipping"; exit 0; }
+          today=$(date +%Y-%m-%d)
+          bad=$(grep -E '^[[:space:]]*expires:' "$f" | sed -E 's/.*expires:[[:space:]]*"?([0-9-]+)"?.*/\1/' \
+                | awk -v t="$today" '$1 < t {print}')
+          if [ -n "$bad" ]; then
+            echo "Expired suppression(s) in $f (re-review or remove):"
+            echo "$bad"
+            exit 1
+          fi
+          echo "All suppressions current."

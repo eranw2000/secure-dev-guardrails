@@ -1,4 +1,5 @@
 ---
+model: fable
 name: privacy-review
 description: Review a feature branch for data-protection compliance (GDPR + CCPA) against the org privacy standards. Produces PRIVACY-COMMENTS.md with severity bands (Blocker, Major, Nit, Question), each anchored to a PRIV-* rule. Use after development and before a PR when the change touches personal data, or when the user says "privacy review", "check GDPR", "data protection review", "PII review". This is the privacy counterpart to security-review; it covers what security review does not (retention, deletion, consent, transfers, subject rights, PII in logs).
 ---

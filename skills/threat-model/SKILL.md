@@ -1,4 +1,5 @@
 ---
+model: fable
 name: threat-model
 description: Produce a design-time threat model for a feature or system, using STRIDE for security threats and LINDDUN for privacy threats, anchored to the org standards. Writes THREAT-MODEL.md with identified threats, their severity, and mitigations that become NFR-SEC-* / NFR-PRIV-* requirements. Use during design (feeds the architect skill) or when the user says "threat model", "STRIDE", "LINDDUN", "what could go wrong with this design", "attack surface". Design-time and proactive, unlike security-review and privacy-review which inspect existing code.
 ---

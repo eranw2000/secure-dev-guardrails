@@ -1,4 +1,5 @@
 ---
+model: fable
 name: dependency-review
 description: Review the dependencies a branch adds or changes for known CVEs, license compliance, supply-chain risk, and unnecessary additions, across Python (pip/Poetry), JS/TS (npm/pnpm), and Java/C# (Maven/Gradle/NuGet). Produces DEPENDENCY-COMMENTS.md anchored to SEC-DEP-* rules. Use when a PR touches a manifest or lockfile, or when the user says "dependency review", "check dependencies", "SCA", "supply chain", "are these packages safe", "license check".
 ---

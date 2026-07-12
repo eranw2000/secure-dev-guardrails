@@ -1,4 +1,5 @@
 ---
+model: opus
 name: secrets-remediation
 description: Guided playbook for when a secret has leaked into the repo or git history (rotate, remove, scrub, verify), and for hardening so it does not recur. Use when a secret scan fired, when the user says "a key got committed", "we leaked a secret", "rotate this credential", "scrub git history", "remove secret from history", or after secret-scan / gitleaks blocks a commit. Detection without remediation just creates panic; this is the remediation half.
 ---

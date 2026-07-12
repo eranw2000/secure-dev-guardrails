@@ -58,3 +58,13 @@ This is defense in depth with a hard gate, not a guarantee. The hooks catch the 
 cases, the skills surface the judgment calls, CI blocks the merge. Whether a field is needed for
 its purpose, or a destination is an approved processor, stays a human decision (DPO, security
 team). Do not describe the system as "ensuring" compliance on its own.
+
+## Model routing
+
+The skills in this pack pin a Claude Code model alias in their frontmatter, so each artifact runs on the tier its work needs:
+
+- `model: fable`: planning and judgment-heavy review
+- `model: opus`: execution and content work
+- `model: sonnet`: routine or mechanical steps
+
+If a pinned model is not available on your plan, or you prefer different routing, edit the `model:` line in the artifact's frontmatter, or delete it to inherit your session model.

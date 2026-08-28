@@ -14,7 +14,8 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
 ## Layout
 
 - `standards/`, the single source of truth. Security rules (SEC-*), privacy rules (PRIV-*,
-  GDPR + CCPA), the severity taxonomy, the suppression baseline, and the two org policy files
+  GDPR + CCPA), AI and agent rules (SEC-AI-*) for systems where a model reads outside
+  content, the severity taxonomy, the suppression baseline, and the two org policy files
   that the skills here (and any external review plugin you point at them) read. Everything else
   cites these IDs.
 - `hooks/`, Claude Code hooks. `secret-scan.sh` and `pii-in-logs.sh` hard-block;

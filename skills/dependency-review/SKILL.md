@@ -38,7 +38,8 @@ or from an arbitrary git ref / URL / tarball (supply-chain risk)? An unpinned or
 unofficial-source dependency is a Major.
 
 ### 4. License compliance
-Check each new dependency's license against the company allowlist. Copyleft (GPL/AGPL) in a
+Check each new dependency's license against the project's own allowlist where it has one, and
+where it has none, report the license and raise the question rather than assuming. Copyleft (GPL/AGPL) in a
 proprietary product, or a missing/unknown license, is a Major or Question depending on the
 company policy. State the license you found.
 

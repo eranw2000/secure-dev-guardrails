@@ -3,7 +3,8 @@
 The canonical privacy policy. This is the half that the existing security tooling does not
 cover. Each rule has a stable ID (`PRIV-*`) that findings anchor to. Bands refer to
 `severity-taxonomy.md`. Legal basis notes point to the GDPR/CCPA concept, not legal advice;
-the company DPO owns interpretation.
+whoever owns data protection for the project owns interpretation, and where nobody is named,
+the question goes to the person who owns the project.
 
 ## What counts as personal data
 
@@ -102,6 +103,6 @@ data. Truly anonymized data (no reasonable path back to a person) is not.
 Most privacy rules cannot be decided from a single diff. Whether a field is "needed for the
 purpose" or whether a destination is an approved sub-processor is a judgment the tooling can
 surface but not settle. The hooks catch the unambiguous cases (PII in logs, real data in
-fixtures); the `privacy-review` skill raises the judgment calls as Major or Question; the DPO
+fixtures); the `privacy-review` skill raises the judgment calls as Major or Question; a human
 and CI baseline settle them. Do not claim the automation "ensures" privacy compliance on its
 own.

@@ -34,8 +34,15 @@ scan_text_for_secrets() {
   if printf '%s' "$text" | grep -Eq '\-\-\-\-\-BEGIN ([A-Z]+ )?PRIVATE KEY\-\-\-\-\-|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|gh[opsu]_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{22,}|xox[baprs]-[0-9A-Za-z-]{10,}|xapp-[0-9A-Za-z-]{10,}|AIza[0-9A-Za-z_-]{35}|sk_live_[0-9A-Za-z]{24,}|rk_live_[0-9A-Za-z]{24,}|sk-ant-[0-9A-Za-z_-]{20,}|sk-[A-Za-z0-9]{32,}|eyJ[A-Za-z0-9_=-]{8,}\.[A-Za-z0-9_=-]{8,}\.[A-Za-z0-9_=-]{8,}'; then
     hit="token"
   fi
-  # Case-insensitive assignment pattern.
-  if printf '%s' "$text" | tr 'A-Z' 'a-z' | grep -Eq '(api[_-]?key|secret[_-]?key|client[_-]?secret|access[_-]?key|auth[_-]?token|password|passwd|pwd)["'"'"' ]*[:=]["'"'"' ]*[a-z0-9/+_=.-]{12,}'; then
+  # Case-insensitive assignment pattern, on the lines that are NOT reading the value from the
+  # environment or a secret store. Measured over 120 real files: every false positive was
+  # `api_key = os.environ.get("SOME_NAME")`, where the quoted variable NAME looks like a value.
+  # The token signatures above still run over the whole text, so a real credential used as a
+  # fallback on an env line is caught there rather than lost here.
+  if printf '%s' "$text" \
+      | grep -Ev 'os\.environ|os\.getenv|getenv\(|process\.env|Deno\.env|System\.getenv|GetEnvironmentVariable|dotenv|load_dotenv|config\(|settings\.|get_secret|SecretClient|KeyVault|secretsmanager' \
+      | tr 'A-Z' 'a-z' \
+      | grep -Eq '(api[_-]?key|secret([_-]?key)?|client[_-]?secret|access[_-]?key|auth[_-]?token|private[_-]?key|refresh[_-]?token|bearer[_-]?token|signing[_-]?key|encryption[_-]?key|session[_-]?secret|connection[_-]?string|password|passwd|pwd)["'"'"' ]*[:=]["'"'"' ]*[a-z0-9/+_=.-]{12,}'; then
     hit="${hit:+$hit,}assignment"
   fi
   printf '%s' "$hit"

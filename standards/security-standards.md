@@ -76,13 +76,39 @@ Scope languages: Python, JavaScript/TypeScript, Java/C#.
 - **SEC-DEP-03 (Question):** A new dependency that duplicates existing functionality prompts a
   "do we need this" question rather than an automatic finding.
 
-## Hook coverage map
+## Who checks each rule
 
-Which rules the deterministic local hooks enforce, and how:
+Every rule below has exactly one owner. Nothing is left to "somebody will notice". Reviewed
+2026-08-28, when four rules moved from having no owner into the warning hook and the rest were
+assigned explicitly.
 
-- Hard-block: SEC-SECRET-01, SEC-SECRET-02 (`secret-scan.sh`).
-- Warn / inject: SEC-INJ-01..03, SEC-WEB-01, SEC-CRYPTO-01..02, SEC-PATH-01
-  (`dangerous-pattern-warn.sh`), plus context injection on auth/crypto files
-  (`sensitive-file-context.sh`).
-- Everything else is review-skill and CI territory (semgrep rulesets, SCA), because it needs
-  cross-file reasoning a single-file regex hook cannot do safely.
+**Blocked by a hook (2).** `secret-scan.sh` refuses the write.
+
+- SEC-SECRET-01, SEC-SECRET-02.
+
+**Warned by a hook (11).** `dangerous-pattern-warn.sh` reads the file after the write and
+reports; `sensitive-file-context.sh` adds the relevant rules when the path is an auth, crypto,
+payment or personal-data one.
+
+- SEC-INJ-01, SEC-INJ-02, SEC-INJ-03, SEC-WEB-01, SEC-WEB-04, SEC-CRYPTO-01, SEC-CRYPTO-02,
+  SEC-PATH-01, SEC-PATH-02, SEC-LOG-01, SEC-SECRET-03.
+
+**Owned by the `dependency-review` skill (3).** A manifest change is not a single-line pattern,
+so no hook attempts it. Run the skill when a manifest or lockfile changes.
+
+- SEC-DEP-01, SEC-DEP-02, SEC-DEP-03.
+
+**Review-time only (4), and each for a stated reason.** A single-file regex cannot decide these
+without lying, so they belong to `security-review`, `code-reviewer` and a human.
+
+- SEC-WEB-02, object-level authorization. Whether a route checks that this caller owns this
+  record is a fact about several files at once.
+- SEC-WEB-03, requests to internal addresses. Deciding this needs the origin of the value, which
+  is a data-flow question.
+- SEC-CRYPTO-03, hand-rolled cryptography. Recognising that a loop is a cipher is not a pattern
+  match.
+- SEC-ERR-01, internal detail in a client-facing error. Whether a string reaches a user depends
+  on the framework's error handling, not on the line.
+
+**What no owner would mean.** A rule with no owner is not a standard, it is a wish. If a rule is
+added below, add it to one of these four groups in the same edit.

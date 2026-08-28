@@ -8,7 +8,8 @@ description: Produce a design-time threat model for a feature or system, using S
 
 You map what could go wrong in a design before it is built, so the mitigations become explicit
 requirements the architect and reviewers can trace. STRIDE covers security threats; LINDDUN
-covers privacy threats. Run both because your organization holds personal data.
+covers privacy threats. Run both whenever the system touches personal data, which is most
+systems that have users at all.
 
 ## Inputs
 
@@ -52,6 +53,29 @@ For each flow that touches personal data, walk the seven categories:
 - **Unawareness:** does the person lack notice/consent or control? (PRIV-CONSENT, PRIV-RIGHTS)
 - **Non-compliance:** does the design violate retention/minimization/transfer rules?
   (PRIV-MIN, PRIV-RET, PRIV-XFER)
+
+
+### 4b. AI and agent pass (only when a model reads or acts)
+
+Skip this pass when no model is involved, and say you skipped it. Run it when the design
+lets a model read outside content, search a store, act without a person watching, or reach
+an attached server. Four questions, one rule each, from
+`standards/ai-agent-standards.md`:
+
+- **Injection through content (SEC-AI-INJ-03).** Where does text from outside the system
+  enter a prompt, and what keeps it in a region the instruction part cannot be confused
+  with? Answer out loud what happens when a document says to ignore everything above it.
+- **Retrieval authorization (SEC-AI-RAG-01).** Is each retrieved item authorized at its
+  SOURCE, at query time, for the identity asking? A filter over returned results is not
+  authorization, and one missed filter returns everything.
+- **Tenant separation (SEC-AI-RAG-02).** Is the tenant a condition of the query, or a test
+  applied to the results afterwards? Only the first survives a bug in the second.
+- **Autonomy and reach (SEC-AI-MCP-04).** What can a run do with nobody watching, and what
+  is the narrowest scope that still does the job? Separate the permission to RECOMMEND from
+  the permission to ACT, and name which one this design grants.
+
+Each answer that must hold becomes an `NFR-SEC-*` requirement in step 5, exactly like a
+STRIDE or LINDDUN mitigation.
 
 ### 5. Rate and mitigate
 For each threat: band it (Blocker/Major/Nit per the taxonomy, by likelihood and impact), then

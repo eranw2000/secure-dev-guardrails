@@ -26,7 +26,7 @@ broad CORS, a retention period longer than the stated policy, a missing data-del
 for a new personal-data store.
 
 Enforcement: warn at the hook layer; flagged by review skills; CI reports but can be
-configured to warn rather than fail, per the company's rollout stage.
+configured to warn rather than fail, per the project's rollout stage.
 
 ### Nit
 A small correctness or hygiene issue with no production consequence on its own. Worth fixing,
@@ -38,7 +38,7 @@ security-relevant branch, an inconsistent error message.
 ### Question
 The reviewer cannot tell from the diff whether something is a problem. Needs author input.
 
-Examples: "Is this field considered personal data under the company classification?",
+Examples: "Is this field personal data under the definition in `privacy-standards.md`?",
 "Where is this token rotated?", "Is this third party a contracted sub-processor?".
 
 ## Finding format

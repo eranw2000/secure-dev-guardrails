@@ -27,6 +27,10 @@ case "$LOWER" in
     CTX="${CTX}CRYPTO path edited ($FILE_PATH). Check SEC-CRYPTO-01 (no disabled TLS verification), SEC-CRYPTO-02 (no MD5/SHA-1/DES/ECB/static-IV; use AES-GCM and a slow KDF for passwords), SEC-CRYPTO-03 (no custom crypto).\n\n" ;;
 esac
 case "$LOWER" in
+  *mcp*|*claude_desktop_config*|*mcp_servers*|*claude.json*)
+    CTX="${CTX}CONNECTED-SERVER config edited ($FILE_PATH). Check SEC-AI-MCP-01 (establish who publishes the server and pin its version; require an encrypted transport for anything off this machine) and SEC-AI-MCP-03 (know what data reaches it, and never send a credential, personal data or client content to a server whose operator is not established). Rules: standards/ai-agent-standards.md\n\n" ;;
+esac
+case "$LOWER" in
   *payment*|*billing*|*checkout*|*charge*|*invoice*|*stripe*|*paypal*|*card*)
     CTX="${CTX}PAYMENT path edited ($FILE_PATH). Do not store PAN/CVV (PRIV special-category/financial). Confirm tokenization and that no cardholder data lands in logs (PRIV-LOG-01) or fixtures (PRIV-ANON-01).\n\n" ;;
 esac

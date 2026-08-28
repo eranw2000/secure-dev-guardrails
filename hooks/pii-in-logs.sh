@@ -22,26 +22,50 @@ set -u
 
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name // ""')
-case "$TOOL" in Edit|Write|MultiEdit) : ;; *) exit 0 ;; esac
+case "$TOOL" in Edit|Write|MultiEdit|Bash) : ;; *) exit 0 ;; esac
 
+# Bash is covered because a heredoc (`cat > f <<EOF`) writes a file without ever touching
+# Edit/Write, which left this hook trivially bypassable. The command text carries the payload,
+# so scanning it catches the same content by the same rules.
 CONTENT=$(echo "$INPUT" | jq -r '
   ( .tool_input.content // empty ),
   ( .tool_input.new_string // empty ),
-  ( .tool_input.edits[]?.new_string // empty )
+  ( .tool_input.edits[]?.new_string // empty ),
+  ( .tool_input.command // empty )
 ' 2>/dev/null)
 [ -z "$CONTENT" ] && exit 0
 
 # Logging / sink call names across Python, JS/TS, Java, C#, plus common analytics. POSIX ERE
 # only (no \s / \b), so it behaves the same under BSD and GNU grep.
-LOG_CALL='(logger?|log|logging|console|print|println|printf|System\.(out|err)|Console\.(Write|WriteLine)|Debug\.|trace|tracer|span\.(set_attribute|setAttribute)|analytics|track|capture|addBreadcrumb|setExtra|setContext)'
+# A CALL, not a word. The name must be followed by "." or "(", otherwise ordinary prose
+# matches: "it prints a note" hit the bare `print` alternative and blocked the write.
+LOG_CALL='(logger?|log|logging|console|print|println|printf|System\.(out|err)|Console\.(Write|WriteLine)|Debug|trace|tracer|span|analytics|track|capture|addBreadcrumb|setExtra|setContext)[[:space:]]*[.(]'
 
 PII_EMAIL='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
 PII_SSN='[0-9]{3}-[0-9]{2}-[0-9]{4}'
-# Explicit personal-data field names. Checked case-insensitively via a lowercased copy.
+# Explicit personal-data field names. Checked case-insensitively against the CODE view of the
+# line (see code_view below), never the raw text: a field name inside a quoted sentence is
+# English, not a field. "300 emails/month" and "blank on my phone" both blocked writes.
 PII_FIELD='(ssn|social_?security|e?mail|phone|passport|credit_?card|card_?number|cvv|date_?of_?birth|dob|home_?address|geo_?location|ip_?address)'
 # Context words that must be near a numeric shape for it to count as SSN / phone.
 SSN_CTX='(ssn|social)'
 PHONE_CTX='(phone|tel|mobile|cell|whatsapp)'
+
+# Strip the BODY of every quoted string, keeping any {...} interpolation, so what is left is
+# code. A field name surviving this is a real reference (user.email, email=..., f"{user.email}");
+# one that does not survive was a word in a sentence. A literal VALUE is judged on the raw line
+# instead, because an address or a card number inside a string is a genuine finding.
+code_view() {
+  # 1. An interpolation is code, so lift it OUT of its string: {x} becomes " x ", which closes
+  #    the surrounding quote before it and reopens after.
+  # 2. A quoted string containing a SPACE is prose, so drop it. One with no space is a token,
+  #    almost always a dict key or a field name, so keep it. That single distinction is what
+  #    separates row["phone_number"] from "blank on my phone".
+  printf '%s' "$1" | sed -E \
+    -e 's/\{([^{}]*)\}/" \1 "/g' \
+    -e 's/"[^"]*[[:space:]][^"]*"/ /g' \
+    -e "s/'[^']*[[:space:]][^']*'/ /g"
+}
 
 # Luhn check: return 0 if the digit string is a valid Luhn number (real card numbers are).
 luhn_ok() {
@@ -75,17 +99,19 @@ add_hit() { HITS="${HITS}\n  $1: $2"; }
 while IFS= read -r line; do
   echo "$line" | grep -Eq "$LOG_CALL" || continue
   lc=$(printf '%s' "$line" | tr 'A-Z' 'a-z')
+  # Name tests read this; value tests read the raw line.
+  cv=$(code_view "$line" | tr 'A-Z' 'a-z')
 
   # Email: unambiguous, block on sight.
   if echo "$line" | grep -Eq "$PII_EMAIL"; then add_hit "email-in-log" "$line"; continue; fi
   # Explicit PII field name in a log call: the developer named the field.
-  if echo "$lc" | grep -Eq "$PII_FIELD"; then add_hit "pii-field-in-log" "$line"; continue; fi
+  if echo "$cv" | grep -Eq "$PII_FIELD"; then add_hit "pii-field-in-log" "$line"; continue; fi
   # Card: only a Luhn-valid number counts (ignores order numbers, timestamps, ids).
   if line_has_card "$line"; then add_hit "card-in-log" "$line"; continue; fi
   # SSN shape, but only next to an SSN context word.
-  if echo "$line" | grep -Eq "$PII_SSN" && echo "$lc" | grep -Eq "$SSN_CTX"; then add_hit "ssn-in-log" "$line"; continue; fi
+  if echo "$line" | grep -Eq "$PII_SSN" && echo "$cv" | grep -Eq "$SSN_CTX"; then add_hit "ssn-in-log" "$line"; continue; fi
   # Phone shape, but only next to a phone context word.
-  if echo "$lc" | grep -Eq "$PHONE_CTX" && echo "$line" | grep -Eq '\+?[0-9][0-9 .()-]{7,}[0-9]'; then add_hit "phone-in-log" "$line"; continue; fi
+  if echo "$cv" | grep -Eq "$PHONE_CTX" && echo "$line" | grep -Eq '\+?[0-9][0-9 .()-]{7,}[0-9]'; then add_hit "phone-in-log" "$line"; continue; fi
 done <<EOF
 $CONTENT
 EOF

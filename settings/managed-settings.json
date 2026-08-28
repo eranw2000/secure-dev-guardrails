@@ -13,7 +13,8 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "/usr/local/share/secure-dev-guardrails/hooks/secret-scan.sh" }
+          { "type": "command", "command": "/usr/local/share/secure-dev-guardrails/hooks/secret-scan.sh" },
+          { "type": "command", "command": "/usr/local/share/secure-dev-guardrails/hooks/pii-in-logs.sh" }
         ]
       }
     ],

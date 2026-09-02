@@ -77,3 +77,28 @@ rules:
       PreparedStatement with bind parameters. See security-standards.md.
     patterns:
       - pattern: $STMT.executeQuery("..." + $X)
+
+  - id: SEC-AUTH-03-python-jwt-verification-off
+    languages: [python]
+    severity: ERROR
+    message: >
+      SEC-AUTH-03: a token check is switched off. Decoding is not verifying. Pass the key, pin
+      the algorithms you accept, and leave the signature, audience and expiry checks on.
+      See security-standards.md.
+    pattern-either:
+      - pattern: 'jwt.decode(..., options={..., "verify_signature": False, ...}, ...)'
+      - pattern: 'jwt.decode(..., options={..., "verify_aud": False, ...}, ...)'
+      - pattern: 'jwt.decode(..., options={..., "verify_exp": False, ...}, ...)'
+      - pattern: jwt.decode(..., verify=False, ...)
+      - pattern: jwt.decode(..., algorithms=["none"], ...)
+
+  - id: SEC-AUTH-03-js-jwt-verification-off
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      SEC-AUTH-03: a token check is switched off. An accepted "none" algorithm means any caller
+      can mint a token, and ignoring expiry means an old one never stops working.
+      See security-standards.md.
+    pattern-either:
+      - pattern: '$JWT.verify($T, $K, {..., algorithms: ["none"], ...}, ...)'
+      - pattern: '$JWT.verify($T, $K, {..., ignoreExpiration: true, ...}, ...)'

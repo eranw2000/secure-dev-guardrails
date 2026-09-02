@@ -45,6 +45,42 @@ Scope languages: Python, JavaScript/TypeScript, Java/C#.
   credentials; state-changing routes are CSRF-protected; cookies set `HttpOnly`, `Secure`,
   `SameSite`.
 
+## Authentication and sessions
+
+`SEC-WEB-02` asks whether this caller may touch this record. These ask the question underneath
+it: whether the caller is who they claim to be, and how long that claim stays good. They are
+separate failures, and a system can pass one while failing the other. Where a password is
+stored is `SEC-CRYPTO-02`; these rules cover the scheme around it.
+
+- **SEC-AUTH-01 (Blocker):** Every route that is not deliberately public authenticates the
+  caller server-side before any handler logic runs. Deliberately public means somebody decided
+  it and the decision is visible in the code. A route left open because nobody added the
+  decorator reads exactly like one that is open on purpose, which is why the default has to be
+  deny and the exception has to be the thing that is written down.
+- **SEC-AUTH-02 (Blocker):** No home-grown authentication scheme. Use the platform's
+  authentication, an established library, or an identity provider (OIDC, OAuth 2.x, or SAML
+  where enterprise federation is required). Password verification, token issuing, session
+  handling and multi-step login are all places where a mistake is silent: the happy path works,
+  and the flaw shows up only when somebody attacks it.
+- **SEC-AUTH-03 (Blocker):** A token is not trusted until its issuer, audience, signature,
+  expiry and intended type have all been checked. Decoding is not verifying. Every JWT library
+  ships a call that reads the claims without checking the signature, one keyword away from the
+  call that checks it. Pin the algorithms you accept rather than reading them from the token's
+  own header, reject `none`, and confirm the token is the type you expected, because an access
+  token replayed where a refresh token belongs passes every other check on this list.
+- **SEC-AUTH-04 (Major):** A session ends. Set an absolute lifetime and an idle timeout, issue a
+  new session identifier whenever privilege changes (at login, and at any elevation), and
+  invalidate server-side on logout and on password change. A session that expires only in the
+  cookie has not expired: the value still works for anyone who kept a copy.
+- **SEC-AUTH-05 (Major):** Repeated authentication failures are rate-limited or locked out, per
+  account and per source, with the counter in a store every process can read. An in-process
+  counter is per worker, so a service running four workers hands an attacker four times the
+  attempts, and the limit you measured against one process is not the limit that ships.
+- **SEC-AUTH-06 (Nit):** A failed login does not reveal which half failed. Login, registration
+  and password reset return the same response, and take a similar time, whether or not the
+  account exists. It is a Nit on its own. It stops being one next to a list of reused passwords,
+  which is the usual next step after an attacker has a list of valid accounts.
+
 ## Crypto and transport
 
 - **SEC-CRYPTO-01 (Blocker):** No disabled TLS verification (`verify=False`,
@@ -146,19 +182,25 @@ in the key names.
 
 Every rule below has exactly one owner. Nothing is left to "somebody will notice". Reviewed
 2026-08-28, when four rules moved from having no owner into the warning hook and the rest were
-assigned explicitly, and again on 2026-09-02 when the four CI rules were added with owners in
-the same edit.
+assigned explicitly, again on 2026-09-02 when the four CI rules were added with owners in the
+same edit, and again on 2026-09-03 for the six authentication rules.
 
 **Blocked by a hook (2).** `secret-scan.sh` refuses the write.
 
 - SEC-SECRET-01, SEC-SECRET-02.
 
-**Warned by a hook (11).** `dangerous-pattern-warn.sh` reads the file after the write and
+**Warned by a hook (12).** `dangerous-pattern-warn.sh` reads the file after the write and
 reports; `sensitive-file-context.sh` adds the relevant rules when the path is an auth, crypto,
 payment or personal-data one.
 
 - SEC-INJ-01, SEC-INJ-02, SEC-INJ-03, SEC-WEB-01, SEC-WEB-04, SEC-CRYPTO-01, SEC-CRYPTO-02,
-  SEC-PATH-01, SEC-PATH-02, SEC-LOG-01, SEC-SECRET-03.
+  SEC-PATH-01, SEC-PATH-02, SEC-LOG-01, SEC-SECRET-03, SEC-AUTH-03.
+
+SEC-AUTH-03 is split the way SEC-DEP-04 is, and the split is stated so nobody reads the hook as
+covering the whole rule. Verification switched off is a pattern, so the hook and the semgrep
+rule catch it. Whether the issuer, audience and token type are actually checked is the absence
+of code rather than the presence of it, and no single-file pattern can see an absence, so that
+half is confirmed at review.
 
 **Checked by the CI workflow (2).** `ci/check-workflow-hardening.sh` reads the repository's
 own workflow files. The `workflow-hardening` job runs it, and pre-commit runs it on a workflow
@@ -182,11 +224,27 @@ about the running system and its logging, not about a line of code.
 
 - SEC-RUN-01, SEC-RUN-02, SEC-RUN-03.
 
-**Review-time only (6), and each for a stated reason.** A single-file regex cannot decide these
+**Review-time only (11), and each for a stated reason.** A single-file regex cannot decide these
 without lying, so they belong to `security-review`, `code-reviewer` and a human.
 
 - SEC-WEB-02, object-level authorization. Whether a route checks that this caller owns this
   record is a fact about several files at once.
+- SEC-AUTH-01, authentication on every non-public route. The finding is a route with no check,
+  and a pattern cannot tell that apart from a route that is public on purpose. It needs the
+  route table read against whatever the project treats as its public list.
+- SEC-AUTH-02, a home-grown authentication scheme. The same shape as the hand-rolled
+  cryptography rule two entries down: recognising that a function is a login flow somebody
+  wrote themselves is not a pattern match.
+- SEC-AUTH-04, session lifetime and rotation. Three separate absences (no absolute lifetime, no
+  rotation on privilege change, no server-side invalidation), and an absence has no line to
+  match on. Framework defaults decide most of it, so the answer lives in configuration the
+  file under review usually does not contain.
+- SEC-AUTH-05, lockout on repeated failures. Also an absence, and the part that is present, a
+  counter, looks identical whether it is per process or shared. Which one it is depends on the
+  store behind it.
+- SEC-AUTH-06, account enumeration. The finding is that two responses differ, so it is a
+  comparison between branches rather than a property of either, and timing is not in the text
+  at all.
 - SEC-WEB-03, requests to internal addresses. Deciding this needs the origin of the value, which
   is a data-flow question.
 - SEC-CRYPTO-03, hand-rolled cryptography. Recognising that a loop is a cipher is not a pattern

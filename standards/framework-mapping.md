@@ -22,7 +22,7 @@ only an opinion held firmly.
 
 ## What is deliberately not mapped, and why
 
-- **A CWE that no 2025 category covers gets no OWASP row.** Four are in that position and
+- **A CWE that no 2025 category covers gets no OWASP row.** Five are in that position and
   each says so on its own line. Assigning them to the nearest-sounding category would make
   the file look complete and be wrong, and a false citation is worse than a missing one.
 - **SLSA build levels, OWASP SAMM and ISO 27001 Annex A are not mapped.** SAMM and ISO
@@ -106,6 +106,48 @@ appears on none of the ten published lists.
 - OWASP Top 10 2025: A01:2025 Broken Access Control; A02:2025 Security Misconfiguration
 - CWE: CWE-352 Cross-Site Request Forgery (CSRF); CWE-942 Permissive Cross-domain Security Policy with Untrusted Domains; CWE-1004 Sensitive Cookie Without 'HttpOnly' Flag
 - Note: Three weaknesses across two categories: CSRF is access control, the CORS and cookie flags are configuration.
+
+**SEC-AUTH-01**
+
+- SSDF: PW.1.3, PW.5.1
+- OWASP Top 10 2025: A07:2025 Authentication Failures
+- CWE: CWE-306 Missing Authentication for Critical Function
+- Note: The finding is a missing check rather than a wrong one, which is why no pattern owns this rule.
+
+**SEC-AUTH-02**
+
+- SSDF: PW.1.3, PW.4.1
+- OWASP Top 10 2025: A07:2025 Authentication Failures
+- CWE: CWE-287 Improper Authentication
+- Note: Using an established implementation is an acquisition practice as much as a coding one, so PW.4.1 sits beside PW.1.3.
+
+**SEC-AUTH-03**
+
+- SSDF: PW.5.1, PW.7.2
+- OWASP Top 10 2025: A04:2025 Cryptographic Failures
+- CWE: CWE-347 Improper Verification of Cryptographic Signature
+- Note: Not the obvious guess: the load-bearing half is the signature check, so the 2025 edition files this under cryptographic failures rather than authentication.
+
+**SEC-AUTH-04**
+
+- SSDF: PW.1.3, PW.9.1
+- OWASP Top 10 2025: A07:2025 Authentication Failures
+- CWE: CWE-613 Insufficient Session Expiration; CWE-384 Session Fixation
+- Note: Two weaknesses in one rule: a session that never expires, and one whose identifier survives a privilege change. Both are authentication failures.
+
+**SEC-AUTH-05**
+
+- SSDF: PW.1.3, PW.9.1
+- OWASP Top 10 2025: A07:2025 Authentication Failures
+- CWE: CWE-307 Improper Restriction of Excessive Authentication Attempts
+- Note: A limit is a configured baseline, hence PW.9.1 rather than a coding practice alone.
+
+**SEC-AUTH-06**
+
+- SSDF: PW.5.1
+- OWASP Top 10 2025: none. No 2025 category lists this rule's CWE.
+- CWE: CWE-204 Observable Response Discrepancy (no 2025 category)
+- Note: CWE-204 is on no 2025 category list, so no OWASP row is claimed for it.
 
 **SEC-CRYPTO-01**
 

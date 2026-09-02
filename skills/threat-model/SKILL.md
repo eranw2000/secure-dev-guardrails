@@ -83,6 +83,27 @@ state a mitigation. Each mitigation that must hold becomes a requirement: phrase
 `NFR-SEC-*` or `NFR-PRIV-*` line the architect can drop into REQUIREMENTS/SPEC and the reviewers
 can later trace.
 
+### 5b. Detection pass (SEC-RUN-01 to 03)
+Mitigation asks how to stop a threat. This asks what happens if it lands anyway. Take each
+Blocker and Major threat from step 5 and answer three questions in one line each:
+
+1. **What signal would show this happening?** A 500 spike, a login from a new country, a row
+   count that jumps, an outbound request to a host nobody named. If the honest answer is
+   "nothing", say so and carry it to Residual risks. A named blind spot is worth more than a
+   comforting sentence.
+2. **Where would that signal be visible, and who would look?** Name the log, dashboard or
+   alert, and the moment somebody reads it. "In the application logs" is not an answer unless
+   something makes a person open them.
+3. **Has it ever fired?** An alert nobody has triggered is a hypothesis. Note whether a
+   representative event has been tested, and if not, make the test an `NFR-SEC` line.
+
+Then check retention once for the whole model: how long the log you are relying on is kept.
+Compare that with how long an intrusion of this kind would plausibly sit unnoticed.
+
+Stay inside what the project actually runs. If there is no runtime protection platform, do not
+write requirements that assume one; write the blind spot down instead. The standards file says
+which detection topics this pack deliberately leaves out and why.
+
 ### 6. Write THREAT-MODEL.md
 
 ```markdown
@@ -114,6 +135,12 @@ Components, data stores, external actors, trust boundaries (or a link to the dat
 ## Proposed requirements (hand-off to architect)
 - NFR-SEC-<n>: ...
 - NFR-PRIV-<n>: ...
+
+## Detection (SEC-RUN-01 to 03)
+One line per Blocker/Major threat: the signal, where it is visible, whether it has ever fired.
+<T-S-1: signal / where / fired yes-no>
+**Log retention relied on:** <window, and whether it is long enough for this system>
+**Blind spots:** <threats with no observable signal, carried into Residual risks below>
 
 ## Residual risks
 Threats accepted without full mitigation, with the reason and owner.

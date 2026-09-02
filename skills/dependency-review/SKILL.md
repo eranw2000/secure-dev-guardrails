@@ -32,6 +32,20 @@ reachable from this project. Band by reachability and impact, not raw score: a c
 reachable path is a Blocker; the same in an unused transitive dep is a Major or Nit. Always name
 the fixed version in the fix.
 
+### 2b. Known exploited (SEC-DEP-04)
+Take the advisory ids from step 2 and run them through the catalogue:
+
+```bash
+ci/check-kev.py CVE-... CVE-...              # ids you already have
+pip-audit -r requirements.txt -f json | ci/check-kev.py --pip-audit -
+```
+
+A hit outranks its CVSS score. Record the CISA due date and the ransomware flag in the finding,
+and band it per SEC-DEP-04: Blocker on a reachable path, Major with a dated reason off one.
+
+The script exits 2, never 0, when it cannot read the catalogue. Treat that as "not checked" and
+say so in the report's Limits section rather than letting an unreachable feed read as clean.
+
 ### 3. Pinning and provenance (SEC-DEP-02)
 Are new dependencies pinned with a committed lockfile? Do they come from the official registry,
 or from an arbitrary git ref / URL / tarball (supply-chain risk)? An unpinned or
@@ -67,6 +81,10 @@ Questions that ask for a human look.
 - ADD <name>@<version> (direct), license <x>, <one line on why>
 - CHANGE <name> <old> -> <new>
 - (transitive churn summarized)
+
+## Known exploited (SEC-DEP-04)
+<CVE, or "none listed", or "not checked: the catalogue was unreachable">
+<for each: CISA due date, ransomware flag, reachable yes/no, and the band that follows>
 
 ## Blockers
 ### B-1: <name>@<version>, <CVE/GHSA>

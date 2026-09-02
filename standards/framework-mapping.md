@@ -170,6 +170,13 @@ appears on none of the ten published lists.
 - CWE: CWE-1104 Use of Unmaintained Third Party Components
 - Note: A question rather than a weakness; the nearest published weakness is an unmaintained component.
 
+**SEC-DEP-04**
+
+- SSDF: RV.1.1, RV.2.1, PW.4.4
+- OWASP Top 10 2025: A03:2025 Software Supply Chain Failures
+- CWE: CWE-1395 Dependency on Vulnerable Third-Party Component
+- Note: A KEV listing is evidence of exploitation now, which is a different claim from a severity score, so it overrides the score rather than adding to it.
+
 ## CI and pipeline rules
 
 **SEC-CI-01**
@@ -198,6 +205,29 @@ appears on none of the ten published lists.
 - OWASP Top 10 2025: A05:2025 Injection
 - CWE: CWE-78 Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection'); CWE-94 Improper Control of Generation of Code ('Code Injection')
 - Note: An expression pasted into a shell before it runs is command injection with a build system for a target.
+
+## Runtime and detection rules
+
+**SEC-RUN-01**
+
+- SSDF: PW.1.1, RV.1.1
+- OWASP Top 10 2025: A09:2025 Security Logging and Alerting Failures
+- CWE: CWE-778 Insufficient Logging
+- Note: Designing the signal, which is why it sits with threat modelling rather than logging.
+
+**SEC-RUN-02**
+
+- SSDF: PW.8.2, RV.1.1
+- OWASP Top 10 2025: A09:2025 Security Logging and Alerting Failures
+- CWE: CWE-223 Omission of Security-relevant Information
+- Note: Detection is the control whose failure mode is silence, so it needs a firing test.
+
+**SEC-RUN-03**
+
+- SSDF: PS.3.1
+- OWASP Top 10 2025: A09:2025 Security Logging and Alerting Failures
+- CWE: CWE-778 Insufficient Logging
+- Note: Retention: evidence that has rotated away cannot be produced when it is wanted.
 
 ## Privacy rules
 

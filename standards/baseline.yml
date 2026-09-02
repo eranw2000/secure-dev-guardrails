@@ -10,6 +10,12 @@
 # Match precedence: a finding is suppressed when its rule_id matches AND (path glob matches OR
 # fingerprint matches). Prefer fingerprint for a single specific line; use path for a known
 # false-positive pattern across a file.
+#
+# SEC-CI-01 adds one optional key, `action`, because the thing being accepted is an action
+# reference rather than a line. `path` is the workflow file (a glob is fine), and `action` names
+# one reference within it; leave `action` out to accept every unpinned reference in that file.
+# ci/check-workflow-hardening.sh reads these entries and prints the finding as waived rather
+# than hiding it, so an accepted risk stays visible in the build log.
 
 version: 1
 

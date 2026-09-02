@@ -13,18 +13,21 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
 
 ## Layout
 
-- `standards/`, the single source of truth. Security rules (SEC-*), privacy rules (PRIV-*,
-  GDPR + CCPA), AI and agent rules (SEC-AI-*) for systems where a model reads outside
-  content, the severity taxonomy, the suppression baseline, and the two org policy files
-  that the skills here (and any external review plugin you point at them) read. Everything else
-  cites these IDs.
+- `standards/`, the single source of truth. Security rules (SEC-*) including the CI and
+  pipeline rules (SEC-CI-*), privacy rules (PRIV-*, GDPR + CCPA), AI and agent rules (SEC-AI-*)
+  for systems where a model reads outside content, the severity taxonomy, the suppression
+  baseline, and the two org policy files that the skills here (and any external review plugin
+  you point at them) read. Everything else cites these IDs. `framework-mapping.md` ties all 54
+  rules to NIST SSDF, the OWASP Top 10 2025, CWE, the OWASP LLM Top 10 2025, and GDPR/CCPA, so
+  a rule can be defended in an audit rather than only asserted.
 - `hooks/`, Claude Code hooks. `secret-scan.sh` and `pii-in-logs.sh` hard-block;
   `sensitive-file-context.sh` and `dangerous-pattern-warn.sh` warn/inject. Portable bash + jq,
   POSIX grep classes (run on BSD and GNU grep).
 - `settings/`, `managed-settings.json` (enterprise policy, non-overridable) and `install.sh`
   (push via MDM with admin rights).
 - `ci/`, `security-privacy.yml` reusable GitHub Actions workflow, `.pre-commit-config.yaml`,
-  and the org `semgrep/` rule packs. This is the gate that actually blocks merges.
+  the org `semgrep/` rule packs, and `check-workflow-hardening.sh`, which reads the repo's own
+  workflow files. This is the gate that actually blocks merges.
 - `skills/`, new skills (`privacy-review`, `threat-model`, `dependency-review`,
   `secrets-remediation`) and `enhancements/` (drop-in specs for `code-review`,
   `security-review`, `spec-review`, `architect`).
@@ -52,8 +55,20 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
   rights).
 - CI-only (needs a toolchain): SAST across the OWASP packs, SCA for known CVEs, license checks,
   baseline-expiry enforcement.
+- Pipeline (CI + pre-commit): actions pinned to a commit SHA and a narrowed build token
+  (SEC-CI-01/02). This one reports by default rather than blocking, and the reason is measured
+  rather than polite: of the three repositories with workflow files on the machine this pack was
+  written on, three fail the pinning rule and none fails the token rule. A gate that stops every
+  existing repository on adoption day is removed by whoever meets it late in the day, so the
+  `pin_actions` input starts at `warn` and a team flips it to `block` once its backlog is clear.
+  An accepted action goes in `standards/baseline.yml` with an owner and an expiry.
 
 ## The honest limit
+
+The two judgment-shaped pipeline rules are not enforced by anything: whether a workflow runs
+untrusted code with credentials (SEC-CI-03), and whether an expression reaches a shell
+(SEC-CI-04), are questions about how parts of a file relate, and a pattern match on either
+produces noise. They belong to review, and the standards file says so beside each one.
 
 This is defense in depth with a hard gate, not a guarantee. The hooks catch the unambiguous
 cases, the skills surface the judgment calls, CI blocks the merge. Whether a field is needed for

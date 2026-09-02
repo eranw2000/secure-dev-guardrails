@@ -26,6 +26,12 @@ name: security-privacy
 #
 # The rollout dial is uniform: every scanning step runs continue-on-error in warn mode, so a
 # finding is annotated but never fails the build; in block mode the step failure fails the job.
+#
+# Every action below is pinned to a full commit SHA with the human-readable version in a
+# trailing comment (SEC-CI-01). A tag is a moving reference: whoever can push to the action's
+# repository can repoint v4 at different code, and every workflow that trusts the tag runs it
+# on the next build. The comment is what makes the pin readable and upgradable; the SHA is what
+# makes it a pin. When you bump one, change both in the same edit.
 
 on:
   workflow_call:
@@ -38,6 +44,10 @@ on:
         description: "block (fail on Blocker findings) or warn (report only)"
         type: string
         default: "block"
+      pin_actions:
+        description: "block (fail when a workflow action is not pinned to a commit SHA) or warn"
+        type: string
+        default: "warn"
 
 permissions:
   contents: read
@@ -46,11 +56,11 @@ jobs:
   secret-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0   # gitleaks needs full history on push
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
         # Mirrors SEC-SECRET-01/02. Fails the job on any finding when enforce=block.
@@ -59,7 +69,7 @@ jobs:
   sast:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: semgrep
         shell: bash
         # The old returntocorp/semgrep-action is deprecated; run the current CLI directly so
@@ -84,7 +94,7 @@ jobs:
     # committed fixtures. The semgrep privacy pack (in the sast job) does the deeper AST checks.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: pii grep net
         shell: bash
         continue-on-error: ${{ inputs.enforce == 'warn' }}
@@ -105,7 +115,7 @@ jobs:
     # and honors the enforce dial via continue-on-error.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: python pip-audit
         shell: bash
         continue-on-error: ${{ inputs.enforce == 'warn' }}
@@ -143,7 +153,7 @@ jobs:
     # cannot rot silently past their review date.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: check baseline expiries
         shell: bash
         run: |
@@ -159,3 +169,31 @@ jobs:
             exit 1
           fi
           echo "All suppressions current."
+
+  workflow-hardening:
+    # SEC-CI-01 / SEC-CI-02: the repo's own GitHub Actions workflows. An action pinned to a tag
+    # is a standing invitation for whoever controls that tag, and a workflow that never narrows
+    # GITHUB_TOKEN hands every step write access it does not need.
+    #
+    # This job has its OWN dial and defaults to warn, unlike every other job here, because the
+    # rule was measured against repositories that already exist rather than against the standard
+    # we would like to hold. Of the three workflow directories on the machine this pack was
+    # written on, three fail SEC-CI-01 and none fails SEC-CI-02. Pinning every action is a real
+    # piece of work for an existing repo, so a team adopting this pack in `enforce: block` should
+    # not be stopped on day one by a rule it has never had a chance to meet. Set
+    # `pin_actions: block` once the backlog is clear, or record an accepted action in
+    # standards/baseline.yml, which the checker reads and reports as waived.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: workflow hardening
+        shell: bash
+        continue-on-error: ${{ inputs.pin_actions == 'warn' }}
+        run: |
+          set -uo pipefail
+          if [ ! -f ci/check-workflow-hardening.sh ]; then
+            echo "ci/check-workflow-hardening.sh not present in this repo, skipping."
+            echo "Copy the pack's ci/ directory in to run this check (same as ci/semgrep/)."
+            exit 0
+          fi
+          bash ci/check-workflow-hardening.sh

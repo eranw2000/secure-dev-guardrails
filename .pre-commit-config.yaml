@@ -32,3 +32,17 @@ repos:
         entry: ci/check-credential-files.sh
         language: script
         pass_filenames: true
+
+      - id: workflow-hardening
+        name: workflow hardening (SEC-CI-01/02)
+        # Reports and never blocks: the `|| true` is what makes that true, because pre-commit
+        # blocks on any non-zero exit and there is no report-only setting. A commit is
+        # recoverable and pinning a backlog of actions is real work, so the release gate is
+        # where this rule earns the right to stop something. `verbose: true` is needed as well,
+        # or a passing hook's output is hidden and the report nobody sees is worth nothing.
+        entry: bash -c 'ci/check-workflow-hardening.sh "$@" || true' --
+        language: system
+        # Only the workflow files, so editing anything else costs nothing.
+        files: ^\.github/workflows/.*\.(yml|yaml)$
+        pass_filenames: true
+        verbose: true

@@ -20,7 +20,7 @@ CTX=""
 
 case "$LOWER" in
   *auth*|*login*|*session*|*oauth*|*token*|*permission*|*authoriz*|*rbac*|*acl*|*middleware*)
-    CTX="${CTX}AUTH/ACCESS path edited ($FILE_PATH). Check SEC-WEB-02 (object-level authorization, not just authentication) and PRIV-ACC-01 (personal-data access restricted to roles that need it). Confirm the change does not widen who can reach a resource or weaken an authz check.\n\n" ;;
+    CTX="${CTX}AUTH/ACCESS path edited ($FILE_PATH). Check SEC-WEB-02 (object-level authorization, not just authentication) and PRIV-ACC-01 (personal-data access restricted to roles that need it). Confirm the change does not widen who can reach a resource or weaken an authz check.\nAuthentication rules for this path: SEC-AUTH-01 every non-public route authenticates server-side, and a public one is public by a decision you can point at. SEC-AUTH-02 no home-grown scheme; use the platform, an established library, or an identity provider. SEC-AUTH-03 a token's issuer, audience, signature, expiry and intended type are all checked, and decoding is not verifying. SEC-AUTH-04 absolute lifetime and idle timeout, a new session id when privilege changes, server-side invalidation on logout and password change. SEC-AUTH-05 repeated failures rate-limited per account and per source, with the counter in a store every worker shares. SEC-AUTH-06 a failed login does not reveal which half failed. Rules: standards/security-standards.md\n\n" ;;
 esac
 case "$LOWER" in
   *crypto*|*encrypt*|*cipher*|*hash*|*secret*|*signing*|*jwt*|*keystore*)

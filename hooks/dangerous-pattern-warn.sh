@@ -4,7 +4,8 @@
 # rather than Blocker/deny).
 #
 # Wired as a PostToolUse hook on Edit/Write. Reads the file on disk after the edit and greps
-# for language-specific dangerous patterns (SEC-INJ, SEC-WEB-01, SEC-CRYPTO-01, SEC-PATH-01).
+# for language-specific dangerous patterns (SEC-INJ, SEC-WEB-01, SEC-CRYPTO-01, SEC-PATH-01,
+# SEC-AUTH-03).
 #
 # Protocol: read JSON from stdin, emit hookSpecificOutput.additionalContext WITH
 # hookEventName:"PostToolUse" (the field is required or the context is dropped), exit 0.
@@ -33,6 +34,14 @@ grep -Eqn 'verify[[:space:]]*=[[:space:]]*False|rejectUnauthorized[[:space:]]*:[
   && add "SEC-CRYPTO-01" "disabled TLS/certificate verification"
 grep -Eqn '(^|[^A-Za-z0-9])(MD5|SHA1|DES|RC4)([^A-Za-z0-9]|$)|"ECB"|/ECB/|MessageDigest\.getInstance\("(MD5|SHA-1)"\)' "$FILE_PATH" \
   && add "SEC-CRYPTO-02" "weak crypto primitive (MD5/SHA1/DES/RC4/ECB)"
+
+# --- SEC-AUTH-03: a token check switched OFF. Only the explicit switches are matched, never the
+# absence of a check, because an absence has no line to match and guessing at it produces the
+# noise that gets a hook switched off. The claim-check half of the rule is confirmed at review.
+grep -Eqn 'verify_signature["'\'']?[[:space:]]*[:=][[:space:]]*(False|false)|algorithms[[:space:]]*[:=][[:space:]]*\[[[:space:]]*["'\''](none|None)["'\'']|["'\'']alg["'\''][[:space:]]*:[[:space:]]*["'\'']none["'\'']|RequireSignedTokens[[:space:]]*=[[:space:]]*false|parseClaimsJwt[[:space:]]*\(' "$FILE_PATH" \
+  && add "SEC-AUTH-03" "token signature not verified (verify_signature off, alg none, or an unsigned-JWT parse)"
+grep -Eqn 'Validate(Issuer|Audience|Lifetime)[[:space:]]*=[[:space:]]*false|verify_(aud|exp|iss|nbf)["'\'']?[[:space:]]*[:=][[:space:]]*(False|false)|ignoreExpiration[[:space:]]*:[[:space:]]*true' "$FILE_PATH" \
+  && add "SEC-AUTH-03" "token claim check switched off (issuer, audience, or expiry)"
 
 # --- SEC-WEB-04: the browser-facing switches, all of which are single-line and decidable ---
 grep -Eqn 'CORS_ALLOW_ALL_ORIGINS[[:space:]]*=[[:space:]]*True|CORS_ORIGIN_ALLOW_ALL[[:space:]]*=[[:space:]]*True|Access-Control-Allow-Origin["'\'' :=]*\*|origin[[:space:]]*:[[:space:]]*["'\'']\*["'\'']' "$FILE_PATH" \

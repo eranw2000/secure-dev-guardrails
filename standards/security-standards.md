@@ -77,6 +77,39 @@ Scope languages: Python, JavaScript/TypeScript, Java/C#.
   official registry. No install from an arbitrary URL or VCS ref without review.
 - **SEC-DEP-03 (Question):** A new dependency that duplicates existing functionality prompts a
   "do we need this" question rather than an automatic finding.
+- **SEC-DEP-04 (Blocker):** A dependency carrying a CVE listed in CISA's Known Exploited
+  Vulnerabilities catalogue is treated as urgent whatever its CVSS score. A score is a guess
+  about how bad a flaw could be; a KEV listing is a statement that somebody is exploiting it
+  now, and CISA sets a remediation date rather than the person triaging it. On a reachable path
+  it is a Blocker. Off one it drops to Major and cannot be closed silently: record the KEV due
+  date, whether the entry is flagged as used in ransomware, and the dated reason, because
+  "unreachable" is a judgement about today's code and the next refactor does not re-check it.
+  Confirm the entry actually applies to the version in the lockfile, since a KEV entry names a
+  vendor and a product rather than a package on your registry.
+
+## Runtime and detection
+
+Everything above asks whether the code is right. These ask a different question: if it were
+attacked anyway, would anyone see it. The question belongs at design time, because a signal
+that was never designed in cannot be added by looking harder at a log that does not carry it.
+
+**What this pack deliberately does not cover.** Continuous container-level detection, meaning
+container escape, cryptomining, reverse shells and anomalous process execution, needs a runtime
+protection platform and somebody watching it. This pack assumes neither, and a rule that
+assumes a security operations team you do not have is a wish rather than a standard. Those
+remain out of scope, and the three rules below are the part that works without them.
+
+- **SEC-RUN-01 (Major):** For each abuse path the threat model names, say what signal would
+  show it happening and where that signal would be visible. A threat with no observable signal
+  is not a gap to hide: record it as a residual risk, so the next person knows the blindness is
+  known rather than accidental.
+- **SEC-RUN-02 (Major):** An alert nobody has ever fired is not an alert. Trigger a
+  representative event and confirm it appears where SEC-RUN-01 said it would. Detection is the
+  one control whose failure mode is silence, so it is the one that most needs a firing test.
+- **SEC-RUN-03 (Major):** Know the retention window of the log you are relying on, and check it
+  against how long an intrusion typically sits before anyone looks. Evidence that has already
+  rotated away is not evidence, and the moment you need it is the worst moment to discover the
+  window was seven days.
 
 ## CI and pipeline
 
@@ -135,10 +168,19 @@ for the reason recorded in the job's own comment. An accepted action goes in
 
 - SEC-CI-01, SEC-CI-02.
 
-**Owned by the `dependency-review` skill (3).** A manifest change is not a single-line pattern,
-so no hook attempts it. Run the skill when a manifest or lockfile changes.
+**Owned by the `dependency-review` skill (4).** A manifest change is not a single-line pattern,
+so no hook attempts it. Run the skill when a manifest or lockfile changes. Its step 2b runs
+`ci/check-kev.py` over the advisory ids the SCA tool reported, which is the mechanical half of
+SEC-DEP-04; deciding reachability stays with the reviewer.
 
-- SEC-DEP-01, SEC-DEP-02, SEC-DEP-03.
+- SEC-DEP-01, SEC-DEP-02, SEC-DEP-03, SEC-DEP-04.
+
+**Owned by the `threat-model` skill (3).** Detection is designed, not noticed, so these are
+asked at step 5b while the system is still on paper and the answers become `NFR-SEC` lines the
+architect can carry. No hook and no scanner can ask them: whether a signal exists is a fact
+about the running system and its logging, not about a line of code.
+
+- SEC-RUN-01, SEC-RUN-02, SEC-RUN-03.
 
 **Review-time only (6), and each for a stated reason.** A single-file regex cannot decide these
 without lying, so they belong to `security-review`, `code-reviewer` and a human.

@@ -78,27 +78,42 @@ rules:
     patterns:
       - pattern: $STMT.executeQuery("..." + $X)
 
+  # Only the switches that were measured to actually bypass a check on PyJWT 2.13.0.
+  # The legacy `verify=False` argument and `algorithms=["none"]` are NOT here: both were
+  # tested against a tampered token and both still raised, so flagging them would be a
+  # false positive, and `verify=False` additionally collides with SEC-CRYPTO-01's TLS
+  # pattern, putting two rule ids on one line with one of them talking about TLS.
   - id: SEC-AUTH-03-python-jwt-verification-off
     languages: [python]
     severity: ERROR
     message: >
-      SEC-AUTH-03: a token check is switched off. Decoding is not verifying. Pass the key, pin
-      the algorithms you accept, and leave the signature, audience and expiry checks on.
-      See security-standards.md.
+      SEC-AUTH-03: a token check is switched off in the options dict, so the token is being
+      read rather than verified. Remove the option, pass the key, and pin the algorithms you
+      accept. See security-standards.md.
     pattern-either:
       - pattern: 'jwt.decode(..., options={..., "verify_signature": False, ...}, ...)'
       - pattern: 'jwt.decode(..., options={..., "verify_aud": False, ...}, ...)'
       - pattern: 'jwt.decode(..., options={..., "verify_exp": False, ...}, ...)'
-      - pattern: jwt.decode(..., verify=False, ...)
-      - pattern: jwt.decode(..., algorithms=["none"], ...)
+      - pattern: 'jwt.decode(..., options={..., "verify_iss": False, ...}, ...)'
+      - pattern: 'jwt.decode_complete(..., options={..., "verify_signature": False, ...}, ...)'
 
+  # $JWT is constrained: unconstrained, it matched any object with a .verify method, so an
+  # unrelated archive.verify(blob, key, {algorithms: ["none"]}) was reported as a token bug.
+  # The algorithm list is matched positionally-free, because ["RS256", "none"] is the shape
+  # that actually ships and an exact ["none"] missed it.
   - id: SEC-AUTH-03-js-jwt-verification-off
     languages: [javascript, typescript]
     severity: ERROR
     message: >
-      SEC-AUTH-03: a token check is switched off. An accepted "none" algorithm means any caller
-      can mint a token, and ignoring expiry means an old one never stops working.
-      See security-standards.md.
-    pattern-either:
-      - pattern: '$JWT.verify($T, $K, {..., algorithms: ["none"], ...}, ...)'
-      - pattern: '$JWT.verify($T, $K, {..., ignoreExpiration: true, ...}, ...)'
+      SEC-AUTH-03: a token check is switched off. Measured on jsonwebtoken 9.0.3, an accepted
+      "none" algorithm is refused while a real key is passed and accepts an attacker-minted
+      unsigned token the moment the key is empty, null or undefined, so listing it is safe only
+      by accident. ignoreExpiration accepts a token that has expired. See security-standards.md.
+    patterns:
+      - pattern-either:
+          - pattern: '$JWT.verify($T, $K, {..., algorithms: [..., "none", ...], ...}, ...)'
+          - pattern: "$JWT.verify($T, $K, {..., algorithms: [..., 'none', ...], ...}, ...)"
+          - pattern: '$JWT.verify($T, $K, {..., ignoreExpiration: true, ...}, ...)'
+      - metavariable-regex:
+          metavariable: $JWT
+          regex: (?i).*(jwt|jsonwebtoken|token).*

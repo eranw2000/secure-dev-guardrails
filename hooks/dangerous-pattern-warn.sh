@@ -38,9 +38,9 @@ grep -Eqn '(^|[^A-Za-z0-9])(MD5|SHA1|DES|RC4)([^A-Za-z0-9]|$)|"ECB"|/ECB/|Messag
 # --- SEC-AUTH-03: a token check switched OFF. Only the explicit switches are matched, never the
 # absence of a check, because an absence has no line to match and guessing at it produces the
 # noise that gets a hook switched off. The claim-check half of the rule is confirmed at review.
-grep -Eqn 'verify_signature["'\'']?[[:space:]]*[:=][[:space:]]*(False|false)|algorithms[[:space:]]*[:=][[:space:]]*\[[[:space:]]*["'\''](none|None)["'\'']|["'\'']alg["'\''][[:space:]]*:[[:space:]]*["'\'']none["'\'']|RequireSignedTokens[[:space:]]*=[[:space:]]*false|parseClaimsJwt[[:space:]]*\(' "$FILE_PATH" \
-  && add "SEC-AUTH-03" "token signature not verified (verify_signature off, alg none, or an unsigned-JWT parse)"
-grep -Eqn 'Validate(Issuer|Audience|Lifetime)[[:space:]]*=[[:space:]]*false|verify_(aud|exp|iss|nbf)["'\'']?[[:space:]]*[:=][[:space:]]*(False|false)|ignoreExpiration[[:space:]]*:[[:space:]]*true' "$FILE_PATH" \
+grep -Eqn 'verify_signature["'\'']?[[:space:]]*[:=][[:space:]]*(False|false)|["'\'']?algorithms["'\'']?[[:space:]]*[:=][[:space:]]*\[[^]]*["'\''](none|None|NONE)["'\'']|["'\'']alg["'\''][[:space:]]*:[[:space:]]*["'\'']none["'\'']|RequireSignedTokens[[:space:]]*=[[:space:]]*false|parseClaimsJwt[[:space:]]*\(' "$FILE_PATH" \
+  && add "SEC-AUTH-03" "unsigned or unverified token path (verify_signature off, none in the accepted algorithm list, or an unsigned-JWT parse)"
+grep -Eqn 'Validate(Issuer|Audience|Lifetime)[[:space:]]*=[[:space:]]*false|verify_(aud|exp|iss|nbf)["'\'']?[[:space:]]*[:=][[:space:]]*(False|false)|["'\'']?ignoreExpiration["'\'']?[[:space:]]*[:=][[:space:]]*true' "$FILE_PATH" \
   && add "SEC-AUTH-03" "token claim check switched off (issuer, audience, or expiry)"
 
 # --- SEC-WEB-04: the browser-facing switches, all of which are single-line and decidable ---
@@ -103,7 +103,7 @@ FINDINGS=$(printf '%b' "$FINDINGS")
 jq -n --arg file "$FILE_PATH" --arg f "$FINDINGS" '{
   hookSpecificOutput: {
     hookEventName: "PostToolUse",
-    additionalContext: ("DANGEROUS-PATTERN WARNING in " + $file + " (standards/security-standards.md):" + $f + "\n\nThese are Major-band patterns that need judgment, not automatic blocks. Confirm the input is trusted or switch to the safe alternative named in the standard (parameterized queries, argument-vector exec, a sanitizer, AES-GCM, path containment check). If it is a genuine false positive, note why.")
+    additionalContext: ("DANGEROUS-PATTERN WARNING in " + $file + " (standards/security-standards.md):" + $f + "\n\nThese need judgment rather than an automatic block. Read the band from the rule itself in standards/security-standards.md, because it is not the same for every pattern above: SEC-AUTH-03 and SEC-CRYPTO-01 are Blockers, most of the rest are Major. Confirm the input is trusted or switch to the safe alternative the standard names (parameterized queries, argument-vector exec, a sanitizer, AES-GCM, a path containment check, and for a token: verify the signature with a pinned algorithm list, then check issuer, audience, expiry and intended type). If it is a genuine false positive, note why.")
   }
 }'
 exit 0

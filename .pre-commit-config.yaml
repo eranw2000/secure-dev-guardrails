@@ -24,6 +24,11 @@ repos:
           - "--config=ci/semgrep/privacy.yml"
           - "--error"
           - "--skip-unknown-extensions"
+        # The detection fixtures are insecure on purpose: they exist so the rules have
+        # something to fire on. pre-commit hands semgrep explicit filenames, and an explicit
+        # path defeats the tests/ entry in semgrep's own default ignore list, so without this
+        # an edit to a fixture would block the very commit that fixes it.
+        exclude: ^ci/tests/fixtures/
 
   - repo: local
     hooks:
@@ -32,6 +37,17 @@ repos:
         entry: ci/check-credential-files.sh
         language: script
         pass_filenames: true
+
+      - id: detection-tests
+        name: detection regression tests (this repo's own rules and hooks)
+        # Runs only when a rule, a hook or a fixture is touched, so an ordinary commit pays
+        # nothing. It blocks, unlike workflow-hardening above, because the thing it catches is
+        # tooling that has stopped working rather than a backlog somebody has to work through.
+        entry: python3 ci/tests/test_sec_auth_03_detections.py
+        language: system
+        files: ^(ci/semgrep/security\.yml|hooks/dangerous-pattern-warn\.sh|ci/tests/)
+        pass_filenames: false
+        verbose: true
 
       - id: workflow-hardening
         name: workflow hardening (SEC-CI-01/02)

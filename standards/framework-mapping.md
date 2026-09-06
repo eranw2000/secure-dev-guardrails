@@ -124,9 +124,9 @@ appears on none of the ten published lists.
 **SEC-AUTH-03**
 
 - SSDF: PW.5.1, PW.7.2
-- OWASP Top 10 2025: A04:2025 Cryptographic Failures
-- CWE: CWE-347 Improper Verification of Cryptographic Signature
-- Note: Not the obvious guess: the load-bearing half is the signature check, so the 2025 edition files this under cryptographic failures rather than authentication.
+- OWASP Top 10 2025: A04:2025 Cryptographic Failures; A07:2025 Authentication Failures
+- CWE: CWE-347 Improper Verification of Cryptographic Signature; CWE-287 Improper Authentication
+- Note: A compound rule, so it cites two weaknesses across two categories, the way SEC-WEB-04 does. The signature half is CWE-347, and the 2025 edition files that under cryptographic failures rather than authentication, which is not the obvious guess. The claim half is CWE-287: a token whose signature is perfectly valid and whose audience nobody checked is an authentication failure and nothing to do with cryptography.
 
 **SEC-AUTH-04**
 

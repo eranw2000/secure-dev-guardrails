@@ -86,8 +86,28 @@ jobs:
             --config p/python \
             --config p/javascript \
             --config p/java \
+            --exclude ci/tests/fixtures \
             --error --disable-version-check
         continue-on-error: ${{ inputs.enforce == 'warn' }}
+
+  detection-tests:
+    # Regression tests for this repository's OWN rules and hooks, not for a consumer's code.
+    # Deliberately NOT continue-on-error: a rule file that stopped parsing is broken tooling
+    # rather than a finding somebody can accept, and an earlier version of the SEC-AUTH-03
+    # rules was invalid YAML, which takes out every rule in the file and not only the new ones.
+    #
+    # The fixtures are excluded from the sast job above, because they contain deliberately
+    # insecure code that exists to be reported. semgrep's default ignore list already skips a
+    # tests/ directory, and the --exclude is there so the arrangement does not depend on an
+    # undocumented default staying the same.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: detection regression tests
+        shell: bash
+        run: |
+          pipx install semgrep
+          python3 ci/tests/test_sec_auth_03_detections.py
 
   pii-scan:
     # Mirrors PRIV-LOG-01 / PRIV-ANON-01 at the repo level: a quick grep net for PII tokens in

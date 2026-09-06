@@ -96,6 +96,12 @@ jobs:
     # rather than a finding somebody can accept, and an earlier version of the SEC-AUTH-03
     # rules was invalid YAML, which takes out every rule in the file and not only the new ones.
     #
+    # This file is a reusable workflow, so the checkout below is the CALLER's repository, and
+    # a consumer's checkout has no ci/tests/ and no hooks/. The step therefore skips, with a
+    # message, wherever it is not running on the pack itself; the pack runs it on itself from
+    # .github/workflows/detection-tests.yml. Without the guard, every adopter's required check
+    # went red on day one over a file they were never told to copy.
+    #
     # The fixtures are excluded from the sast job above, because they contain deliberately
     # insecure code that exists to be reported. semgrep's default ignore list already skips a
     # tests/ directory, and the --exclude is there so the arrangement does not depend on an
@@ -106,6 +112,12 @@ jobs:
       - name: detection regression tests
         shell: bash
         run: |
+          set -uo pipefail
+          if [ ! -f ci/tests/test_sec_auth_03_detections.py ] || [ ! -f hooks/dangerous-pattern-warn.sh ]; then
+            echo "This checkout is not the secure-dev-guardrails pack, so there are no pack rules"
+            echo "to regression-test here. Skipping; the pack runs this on itself."
+            exit 0
+          fi
           pipx install semgrep
           python3 ci/tests/test_sec_auth_03_detections.py
 

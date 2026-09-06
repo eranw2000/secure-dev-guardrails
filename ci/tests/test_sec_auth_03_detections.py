@@ -59,6 +59,12 @@ SEMGREP_FILES = [
 ]
 MARKER = "EXPECT " + RULE_ID
 
+
+def is_negative_fixture(name: str) -> bool:
+    """A fixture that must carry NO marker: the good ones, and the ast_only ones where semgrep
+    is the tool that must stay silent. Everything else is positive and must carry at least one."""
+    return "_good." in name or "_ast_only." in name
+
 # fixture -> must the shell hook report SEC-AUTH-03 in it?
 HOOK_EXPECT = {
     "sec_auth_03_bad.py": True,
@@ -76,12 +82,41 @@ HOOK_EXPECT = {
     "sec_auth_03_hook_quoted_alg.js": True,
     "sec_auth_03_hook_prop_assign.js": True,
     "sec_auth_03_hook_claims_off.cs": True,
+    # One per remaining alternation, added after a mutation run showed five of the eight could
+    # be deleted from the hook with this suite still green, each hiding behind a sibling switch
+    # in the same multi-case fixture.
+    "sec_auth_03_hook_verify_signature.py": True,
+    "sec_auth_03_hook_verify_exp.py": True,
+    "sec_auth_03_hook_require_signed.cs": True,
+    "sec_auth_03_hook_parse_claims.java": True,
+    "sec_auth_03_hook_alg_none_header.js": True,
+    "sec_auth_03_hook_legacy_verify.py": True,
+    "sec_auth_03_hook_sigvalidator.cs": True,
+    "sec_auth_03_hook_issuer_signing_key.cs": True,
+    "sec_auth_03_hook_unsecured.java": True,
+    "sec_auth_03_hook_allow_expired.py": True,
+    # Negatives with a reason each: a denylist named insecure_algorithms is not an accepted
+    # list, and verify=False on an HTTP call is a TLS finding rather than a token one.
+    "sec_auth_03_hook_good_denylist.py": False,
+    "sec_auth_03_hook_tls_control.py": False,
+}
+
+# The verify=False split, both directions: on a decode call it is SEC-AUTH-03 and not
+# SEC-CRYPTO-01, on an HTTP call it is SEC-CRYPTO-01 and not SEC-AUTH-03. One direction alone
+# would pass with the TLS pattern deleted outright.
+CRYPTO_ID = "SEC-CRYPTO-01"
+CRYPTO_EXPECT = {
+    "sec_auth_03_hook_legacy_verify.py": False,
+    "sec_auth_03_hook_tls_control.py": True,
 }
 
 failures: list[str] = []
+checks_run = 0
 
 
 def check(label: str, got, want) -> None:
+    global checks_run
+    checks_run += 1
     ok = got == want
     print(f"  {'ok  ' if ok else 'FAIL'} {label}  (got {got!r}, want {want!r})")
     if not ok:
@@ -131,6 +166,12 @@ def run_semgrep() -> None:
         want_lines[name] = marked
     total_marked = sum(len(v) for v in want_lines.values())
     check("the fixtures actually carry markers to check against", total_marked > 0, True)
+    # Per fixture, not only in total. A positive fixture with no marker and a rule that misses
+    # every case in it agree on an empty set, and the global count above is satisfied by the
+    # other fixtures, so that file would pass as a negative nobody asked for.
+    for name in SEMGREP_FILES:
+        if not is_negative_fixture(name):
+            check(f"{name} carries at least one marker", len(want_lines[name]) > 0, True)
 
     got_lines: dict[str, set[int]] = {n: set() for n in SEMGREP_FILES}
     for r in data["results"]:
@@ -176,6 +217,8 @@ def run_hook() -> None:
           len(hook_findings(FIX / "sec_auth_03_good.cs")), 0)
     for name, want in HOOK_EXPECT.items():
         check(f"{name} reported", RULE_ID in hook_findings(FIX / name), want)
+    for name, want in CRYPTO_EXPECT.items():
+        check(f"{name} reported as {CRYPTO_ID}", CRYPTO_ID in hook_findings(FIX / name), want)
 
 
 def main() -> int:
@@ -187,12 +230,11 @@ def main() -> int:
     run_semgrep()
     run_hook()
 
-    total = len(SEMGREP_FILES) + len(HOOK_EXPECT) + 5
     print()
     if failures:
-        print(f"FAIL: {len(failures)} of about {total} checks failed: {failures}")
+        print(f"FAIL: {len(failures)} of {checks_run} checks failed: {failures}")
         return 1
-    print(f"PASS: about {total} checks, both tools, both directions.")
+    print(f"PASS: {checks_run} checks, both tools, both directions.")
     return 0
 
 

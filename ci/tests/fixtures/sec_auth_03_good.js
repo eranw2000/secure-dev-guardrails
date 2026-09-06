@@ -16,3 +16,9 @@ function verifiedThenTyped(token, key) {
   }
   return claims;
 }
+
+// The literal matters: false is the safe value, and a rule that matched any value would
+// report this line.
+function expiryChecked(token, key) {
+  return jwt.verify(token, key, { algorithms: ["RS256"], ignoreExpiration: false });
+}

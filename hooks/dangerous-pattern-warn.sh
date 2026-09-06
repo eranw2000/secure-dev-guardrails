@@ -30,7 +30,11 @@ FINDINGS=""
 add() { FINDINGS="${FINDINGS}\n  [$1] $2"; }
 
 # --- cross-language ---
-grep -Eqn 'verify[[:space:]]*=[[:space:]]*False|rejectUnauthorized[[:space:]]*:[[:space:]]*false|InsecureRequestWarning|TrustAllCerts|ServerCertificateValidationCallback[[:space:]]*=[[:space:]]*.*true' "$FILE_PATH" \
+# A bare `verify=False` is a TLS switch on an HTTP call and a token switch on a decode call, and
+# one line cannot carry which. So a `decode(` line is left to SEC-AUTH-03 below and this rule
+# reads the rest, or the token bypass gets reported as a certificate problem with the wrong fix.
+{ grep -Eqn 'rejectUnauthorized[[:space:]]*:[[:space:]]*false|InsecureRequestWarning|TrustAllCerts|ServerCertificateValidationCallback[[:space:]]*=[[:space:]]*.*true' "$FILE_PATH" \
+  || grep -Ev 'decode[[:space:]]*\(' "$FILE_PATH" | grep -Eq 'verify[[:space:]]*=[[:space:]]*False'; } \
   && add "SEC-CRYPTO-01" "disabled TLS/certificate verification"
 grep -Eqn '(^|[^A-Za-z0-9])(MD5|SHA1|DES|RC4)([^A-Za-z0-9]|$)|"ECB"|/ECB/|MessageDigest\.getInstance\("(MD5|SHA-1)"\)' "$FILE_PATH" \
   && add "SEC-CRYPTO-02" "weak crypto primitive (MD5/SHA1/DES/RC4/ECB)"
@@ -38,9 +42,12 @@ grep -Eqn '(^|[^A-Za-z0-9])(MD5|SHA1|DES|RC4)([^A-Za-z0-9]|$)|"ECB"|/ECB/|Messag
 # --- SEC-AUTH-03: a token check switched OFF. Only the explicit switches are matched, never the
 # absence of a check, because an absence has no line to match and guessing at it produces the
 # noise that gets a hook switched off. The claim-check half of the rule is confirmed at review.
-grep -Eqn 'verify_signature["'\'']?[[:space:]]*[:=][[:space:]]*(False|false)|["'\'']?algorithms["'\'']?[[:space:]]*[:=][[:space:]]*\[[^]]*["'\''](none|None|NONE)["'\'']|["'\'']alg["'\''][[:space:]]*:[[:space:]]*["'\'']none["'\'']|RequireSignedTokens[[:space:]]*=[[:space:]]*false|parseClaimsJwt[[:space:]]*\(' "$FILE_PATH" \
-  && add "SEC-AUTH-03" "unsigned or unverified token path (verify_signature off, none in the accepted algorithm list, or an unsigned-JWT parse)"
-grep -Eqn 'Validate(Issuer|Audience|Lifetime)[[:space:]]*=[[:space:]]*false|verify_(aud|exp|iss|nbf)["'\'']?[[:space:]]*[:=][[:space:]]*(False|false)|["'\'']?ignoreExpiration["'\'']?[[:space:]]*[:=][[:space:]]*true' "$FILE_PATH" \
+# `algorithms` needs a left boundary: without one, a denylist NAMED insecure_algorithms reads
+# as an accepted list. `decode(...verify=False)` is the legacy PyJWT switch, a real bypass on
+# 1.x, and it is claimed here so SEC-CRYPTO-01 above does not label it a certificate problem.
+grep -Eqn 'verify_signature["'\'']?[[:space:]]*[:=][[:space:]]*(False|false)|decode[[:space:]]*\([^)]*verify[[:space:]]*=[[:space:]]*(False|false)|(^|[^A-Za-z0-9_])["'\'']?algorithms["'\'']?[[:space:]]*[:=][[:space:]]*\[[^]]*["'\''](none|None|NONE)["'\'']|["'\'']alg["'\''][[:space:]]*:[[:space:]]*["'\'']none["'\'']|RequireSignedTokens[[:space:]]*=[[:space:]]*false|ValidateIssuerSigningKey[[:space:]]*=[[:space:]]*false|SignatureValidator[[:space:]]*=|parseClaimsJwt[[:space:]]*\(|\.unsecured[[:space:]]*\(' "$FILE_PATH" \
+  && add "SEC-AUTH-03" "unsigned or unverified token path (verify_signature off, legacy verify=False, none in the accepted algorithm list, an unsigned-JWT parse, or a .NET signature validator replaced or switched off)"
+grep -Eqn 'Validate(Issuer|Audience|Lifetime)[[:space:]]*=[[:space:]]*false|verify_(aud|exp|iss|nbf)["'\'']?[[:space:]]*[:=][[:space:]]*(False|false)|["'\'']?ignoreExpiration["'\'']?[[:space:]]*[:=][[:space:]]*true|allow_expired[[:space:]]*=[[:space:]]*True' "$FILE_PATH" \
   && add "SEC-AUTH-03" "token claim check switched off (issuer, audience, or expiry)"
 
 # --- SEC-WEB-04: the browser-facing switches, all of which are single-line and decidable ---

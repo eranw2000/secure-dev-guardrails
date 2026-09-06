@@ -45,6 +45,61 @@ Scope languages: Python, JavaScript/TypeScript, Java/C#.
   credentials; state-changing routes are CSRF-protected; cookies set `HttpOnly`, `Secure`,
   `SameSite`.
 
+## Authentication and sessions
+
+`SEC-WEB-02` asks whether this caller may touch this record. These ask the question underneath
+it: whether the caller is who they claim to be, and how long that claim stays good. They are
+separate failures, and a system can pass one while failing the other. Where a password is
+stored is `SEC-CRYPTO-02`; these rules cover the scheme around it.
+
+- **SEC-AUTH-01 (Blocker):** Every route that is not deliberately public authenticates the
+  caller server-side before any handler logic runs. Deliberately public means somebody decided
+  it and the decision is visible in the code. A route left open because nobody added the
+  decorator reads exactly like one that is open on purpose, which is why the default has to be
+  deny and the exception has to be the thing that is written down.
+- **SEC-AUTH-02 (Blocker):** No home-grown authentication scheme. Use the platform's
+  authentication, an established library, or an identity provider: OpenID Connect where you need
+  authentication, or SAML where enterprise federation is required. OAuth 2.x on its own is an
+  authorization framework and authenticates nobody, so an access token is not evidence of who the
+  caller is and must not be accepted as a login. Password verification, token issuing, session
+  handling and multi-step login are all places where a mistake is silent: the happy path works,
+  and the flaw shows up only when somebody attacks it. Which primitive hashes the password is
+  SEC-CRYPTO-02's finding and not this one, so a weak hash inside a hand-written verifier is
+  reported once under each rule for its own reason, never twice for the same one.
+- **SEC-AUTH-03 (Blocker):** A SELF-CONTAINED token, meaning one the server validates from
+  the token itself rather than by looking it up (a JWT, or any signed claim-bearing equivalent),
+  is not trusted until its signature, issuer, audience, expiry and intended type have all been
+  checked. Decoding is not verifying: every JWT library ships a call that reads the claims
+  without checking the signature, one keyword away from the call that checks it. Pin the
+  algorithms you accept rather than reading them from the token's own header, and reject `none`.
+  Intended type means the token says what it is for, through a `typ` header, a purpose claim, or
+  a separate signing key per purpose, and the endpoint checks it, because an access token
+  replayed where a refresh token belongs passes every other check on this list. An OPAQUE token,
+  a random identifier the server looks up, carries no claims to check and is governed by
+  SEC-AUTH-04 instead.
+- **SEC-AUTH-04 (Major):** A session ends. Set an absolute lifetime and an idle timeout, issue a
+  new session identifier whenever privilege changes (at login, and at any elevation), and
+  invalidate server-side on logout and on password change. Write both values down with the reason
+  they were chosen: a lifetime of a hundred years satisfies every word of this rule and none of
+  its point, so what a reviewer checks is the recorded value against the sensitivity of what the
+  session reaches, never that some value exists. A session that expires only in the cookie has not
+  expired: the value still works for anyone who kept a copy.
+- **SEC-AUTH-05 (Major):** Repeated authentication failures are rate-limited or locked out, per
+  account and per source, with the threshold written down beside the reason it was chosen; a
+  limit of a billion a day meets the words and not the rule. Per source means whatever identifies
+  the caller in your deployment, normally the client address after whichever proxy header you
+  actually trust, and the rule is to say which, because behind a load balancer the wrong choice
+  rate-limits the balancer. The counter lives where every process serving logins can read it: an
+  in-process counter is per worker, so four workers hand an attacker four times the attempts, and
+  the limit you measured against one process is not the limit that ships. A limiter at the edge or
+  in the identity provider satisfies this rule, and where it runs is part of the answer, because a
+  limit nobody can point at is not one.
+- **SEC-AUTH-06 (Major):** A failed login does not reveal which half failed. Login,
+  registration and password reset return the same response, and take a similar time, whether or
+  not the account exists. It reads like a small thing and is banded as a real one, because a list
+  of valid accounts is the input to credential stuffing rather than the attack itself, and the
+  taxonomy reserves Nit for a finding with no production consequence of its own.
+
 ## Crypto and transport
 
 - **SEC-CRYPTO-01 (Blocker):** No disabled TLS verification (`verify=False`,
@@ -146,8 +201,8 @@ in the key names.
 
 Every rule below has exactly one owner. Nothing is left to "somebody will notice". Reviewed
 2026-08-28, when four rules moved from having no owner into the warning hook and the rest were
-assigned explicitly, and again on 2026-09-02 when the four CI rules were added with owners in
-the same edit.
+assigned explicitly, again on 2026-09-02 when the four CI rules were added with owners in the
+same edit, and again on 2026-09-03 for the six authentication rules.
 
 **Blocked by a hook (2).** `secret-scan.sh` refuses the write.
 
@@ -182,11 +237,33 @@ about the running system and its logging, not about a line of code.
 
 - SEC-RUN-01, SEC-RUN-02, SEC-RUN-03.
 
-**Review-time only (6), and each for a stated reason.** A single-file regex cannot decide these
+**Review-time only (12), and each for a stated reason.** A single-file regex cannot decide these
 without lying, so they belong to `security-review`, `code-reviewer` and a human.
 
 - SEC-WEB-02, object-level authorization. Whether a route checks that this caller owns this
   record is a fact about several files at once.
+- SEC-AUTH-03, a token accepted without its checks. The hook and the semgrep rule catch a
+  check switched OFF, which is the mechanical half, in the same way step 2b of
+  `dependency-review` is the mechanical half of the known-exploited rule. They cannot catch the
+  half that matters more: a check that was never written has no line to match, so whether the
+  issuer, audience and intended type are actually verified is settled by reading the code. The
+  owner is the reviewer, and the patterns are an assist.
+- SEC-AUTH-01, authentication on every non-public route. The finding is a route with no check,
+  and a pattern cannot tell that apart from a route that is public on purpose. It needs the
+  route table read against whatever the project treats as its public list.
+- SEC-AUTH-02, a home-grown authentication scheme. The same shape as the hand-rolled
+  cryptography rule two entries down: recognising that a function is a login flow somebody
+  wrote themselves is not a pattern match.
+- SEC-AUTH-04, session lifetime and rotation. Three separate absences (no absolute lifetime, no
+  rotation on privilege change, no server-side invalidation), and an absence has no line to
+  match on. Framework defaults decide most of it, so the answer lives in configuration the
+  file under review usually does not contain.
+- SEC-AUTH-05, lockout on repeated failures. Also an absence, and the part that is present, a
+  counter, looks identical whether it is per process or shared. Which one it is depends on the
+  store behind it.
+- SEC-AUTH-06, account enumeration. The finding is that two responses differ, so it is a
+  comparison between branches rather than a property of either, and timing is not in the text
+  at all.
 - SEC-WEB-03, requests to internal addresses. Deciding this needs the origin of the value, which
   is a data-flow question.
 - SEC-CRYPTO-03, hand-rolled cryptography. Recognising that a loop is a cipher is not a pattern

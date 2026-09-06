@@ -1,0 +1,25 @@
+name: detection-tests
+
+# The pack's own CI: runs the regression tests for its rules and hooks on the pack itself.
+# The same job in ci/security-privacy.yml is a reusable workflow that checks out the CALLER,
+# so it skips there and runs here. Pinned to a commit SHA per SEC-CI-01, token narrowed per
+# SEC-CI-02, both checked by ci/check-workflow-hardening.sh.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  detection-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: detection regression tests
+        shell: bash
+        run: |
+          pipx install semgrep
+          python3 ci/tests/test_sec_auth_03_detections.py

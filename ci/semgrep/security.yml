@@ -77,3 +77,61 @@ rules:
       PreparedStatement with bind parameters. See security-standards.md.
     patterns:
       - pattern: $STMT.executeQuery("..." + $X)
+
+  # Only the switches measured to bypass a check. `algorithms=["none"]` is NOT here: on PyJWT
+  # 1.7.1, 2.0.1 and 2.13.0 it raises against a tampered token and against an alg-none token
+  # with any key, so flagging it would be a false positive. The legacy `verify=False` argument
+  # has its own rule below, because what it does depends on the major version.
+  - id: SEC-AUTH-03-python-jwt-verification-off
+    languages: [python]
+    severity: ERROR
+    message: >
+      SEC-AUTH-03: a token check is switched off in the options dict, so the token is being
+      read rather than verified. Remove the option, pass the key, and pin the algorithms you
+      accept. See security-standards.md.
+    pattern-either:
+      - pattern: 'jwt.decode(..., options={..., "verify_signature": False, ...}, ...)'
+      - pattern: 'jwt.decode(..., options={..., "verify_aud": False, ...}, ...)'
+      - pattern: 'jwt.decode(..., options={..., "verify_exp": False, ...}, ...)'
+      - pattern: 'jwt.decode(..., options={..., "verify_iss": False, ...}, ...)'
+      - pattern: 'jwt.decode_complete(..., options={..., "verify_signature": False, ...}, ...)'
+      - pattern: 'jwt.decode_complete(..., options={..., "verify_aud": False, ...}, ...)'
+      - pattern: 'jwt.decode_complete(..., options={..., "verify_exp": False, ...}, ...)'
+      - pattern: 'jwt.decode_complete(..., options={..., "verify_iss": False, ...}, ...)'
+
+  # Measured on PyJWT 1.7.1: `verify=False` ACCEPTS a tampered token, a full signature bypass.
+  # On 2.x the argument is ignored and the signature is still checked, so there it is dead
+  # code that reads like a bypass. It goes either way, and this pack cannot see which major a
+  # consumer pins (djangorestframework-jwt 1.11 still pins PyJWT below 2.0). A rule of its own
+  # so the message can say both halves; SEC-AUTH-03 stays in the id for the test's sake.
+  - id: SEC-AUTH-03-python-jwt-legacy-verify-false
+    languages: [python]
+    severity: ERROR
+    message: >
+      SEC-AUTH-03: the legacy verify=False argument. On PyJWT 1.x it switches the signature
+      check off entirely; on 2.x it is ignored and only reads like a bypass. Remove it either
+      way, pass the key, and pin the algorithms you accept. See security-standards.md.
+    pattern: jwt.decode(..., verify=False, ...)
+
+  # $JWT is constrained: unconstrained, it matched any object with a .verify method, so an
+  # unrelated archive.verify(blob, key, {algorithms: ["none"]}) was reported as a token bug.
+  # The algorithm list is matched positionally-free, because ["RS256", "none"] is the shape
+  # that actually ships and an exact ["none"] missed it. One pattern covers both quote styles:
+  # semgrep matches a string literal regardless of its quotes, measured by a single-quoted
+  # fixture case that the double-quoted pattern reports, so a second pattern for 'none' was
+  # dead code and a mutation run showed it could be deleted unnoticed.
+  - id: SEC-AUTH-03-js-jwt-verification-off
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      SEC-AUTH-03: a token check is switched off. Measured on jsonwebtoken 9.0.3, an accepted
+      "none" algorithm is refused while a real key is passed and accepts an attacker-minted
+      unsigned token the moment the key is empty, null or undefined, so listing it is safe only
+      by accident. ignoreExpiration accepts a token that has expired. See security-standards.md.
+    patterns:
+      - pattern-either:
+          - pattern: '$JWT.verify($T, $K, {..., algorithms: [..., "none", ...], ...}, ...)'
+          - pattern: '$JWT.verify($T, $K, {..., ignoreExpiration: true, ...}, ...)'
+      - metavariable-regex:
+          metavariable: $JWT
+          regex: (?i).*(jwt|jsonwebtoken|token).*

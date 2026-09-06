@@ -4,7 +4,8 @@
 # rather than Blocker/deny).
 #
 # Wired as a PostToolUse hook on Edit/Write. Reads the file on disk after the edit and greps
-# for language-specific dangerous patterns (SEC-INJ, SEC-WEB-01, SEC-CRYPTO-01, SEC-PATH-01).
+# for language-specific dangerous patterns (SEC-INJ, SEC-WEB-01, SEC-CRYPTO-01, SEC-PATH-01,
+# SEC-AUTH-03).
 #
 # Protocol: read JSON from stdin, emit hookSpecificOutput.additionalContext WITH
 # hookEventName:"PostToolUse" (the field is required or the context is dropped), exit 0.
@@ -29,10 +30,25 @@ FINDINGS=""
 add() { FINDINGS="${FINDINGS}\n  [$1] $2"; }
 
 # --- cross-language ---
-grep -Eqn 'verify[[:space:]]*=[[:space:]]*False|rejectUnauthorized[[:space:]]*:[[:space:]]*false|InsecureRequestWarning|TrustAllCerts|ServerCertificateValidationCallback[[:space:]]*=[[:space:]]*.*true' "$FILE_PATH" \
+# A bare `verify=False` is a TLS switch on an HTTP call and a token switch on a decode call, and
+# one line cannot carry which. So a `decode(` line is left to SEC-AUTH-03 below and this rule
+# reads the rest, or the token bypass gets reported as a certificate problem with the wrong fix.
+{ grep -Eqn 'rejectUnauthorized[[:space:]]*:[[:space:]]*false|InsecureRequestWarning|TrustAllCerts|ServerCertificateValidationCallback[[:space:]]*=[[:space:]]*.*true' "$FILE_PATH" \
+  || grep -Ev 'decode[[:space:]]*\(' "$FILE_PATH" | grep -Eq 'verify[[:space:]]*=[[:space:]]*False'; } \
   && add "SEC-CRYPTO-01" "disabled TLS/certificate verification"
 grep -Eqn '(^|[^A-Za-z0-9])(MD5|SHA1|DES|RC4)([^A-Za-z0-9]|$)|"ECB"|/ECB/|MessageDigest\.getInstance\("(MD5|SHA-1)"\)' "$FILE_PATH" \
   && add "SEC-CRYPTO-02" "weak crypto primitive (MD5/SHA1/DES/RC4/ECB)"
+
+# --- SEC-AUTH-03: a token check switched OFF. Only the explicit switches are matched, never the
+# absence of a check, because an absence has no line to match and guessing at it produces the
+# noise that gets a hook switched off. The claim-check half of the rule is confirmed at review.
+# `algorithms` needs a left boundary: without one, a denylist NAMED insecure_algorithms reads
+# as an accepted list. `decode(...verify=False)` is the legacy PyJWT switch, a real bypass on
+# 1.x, and it is claimed here so SEC-CRYPTO-01 above does not label it a certificate problem.
+grep -Eqn 'verify_signature["'\'']?[[:space:]]*[:=][[:space:]]*(False|false)|decode[[:space:]]*\([^)]*verify[[:space:]]*=[[:space:]]*(False|false)|(^|[^A-Za-z0-9_])["'\'']?algorithms["'\'']?[[:space:]]*[:=][[:space:]]*\[[^]]*["'\''](none|None|NONE)["'\'']|["'\'']alg["'\''][[:space:]]*:[[:space:]]*["'\'']none["'\'']|RequireSignedTokens[[:space:]]*=[[:space:]]*false|ValidateIssuerSigningKey[[:space:]]*=[[:space:]]*false|SignatureValidator[[:space:]]*=|parseClaimsJwt[[:space:]]*\(|\.unsecured[[:space:]]*\(' "$FILE_PATH" \
+  && add "SEC-AUTH-03" "unsigned or unverified token path (verify_signature off, legacy verify=False, none in the accepted algorithm list, an unsigned-JWT parse, or a .NET signature validator replaced or switched off)"
+grep -Eqn 'Validate(Issuer|Audience|Lifetime)[[:space:]]*=[[:space:]]*false|verify_(aud|exp|iss|nbf)["'\'']?[[:space:]]*[:=][[:space:]]*(False|false)|["'\'']?ignoreExpiration["'\'']?[[:space:]]*[:=][[:space:]]*true|allow_expired[[:space:]]*=[[:space:]]*True' "$FILE_PATH" \
+  && add "SEC-AUTH-03" "token claim check switched off (issuer, audience, or expiry)"
 
 # --- SEC-WEB-04: the browser-facing switches, all of which are single-line and decidable ---
 grep -Eqn 'CORS_ALLOW_ALL_ORIGINS[[:space:]]*=[[:space:]]*True|CORS_ORIGIN_ALLOW_ALL[[:space:]]*=[[:space:]]*True|Access-Control-Allow-Origin["'\'' :=]*\*|origin[[:space:]]*:[[:space:]]*["'\'']\*["'\'']' "$FILE_PATH" \
@@ -94,7 +110,7 @@ FINDINGS=$(printf '%b' "$FINDINGS")
 jq -n --arg file "$FILE_PATH" --arg f "$FINDINGS" '{
   hookSpecificOutput: {
     hookEventName: "PostToolUse",
-    additionalContext: ("DANGEROUS-PATTERN WARNING in " + $file + " (standards/security-standards.md):" + $f + "\n\nThese are Major-band patterns that need judgment, not automatic blocks. Confirm the input is trusted or switch to the safe alternative named in the standard (parameterized queries, argument-vector exec, a sanitizer, AES-GCM, path containment check). If it is a genuine false positive, note why.")
+    additionalContext: ("DANGEROUS-PATTERN WARNING in " + $file + " (standards/security-standards.md):" + $f + "\n\nThese need judgment rather than an automatic block. Read the band from the rule itself in standards/security-standards.md, because it is not the same for every pattern above: SEC-AUTH-03 and SEC-CRYPTO-01 are Blockers, most of the rest are Major. Confirm the input is trusted or switch to the safe alternative the standard names (parameterized queries, argument-vector exec, a sanitizer, AES-GCM, a path containment check, and for a token: verify the signature with a pinned algorithm list, then check issuer, audience, expiry and intended type). If it is a genuine false positive, note why.")
   }
 }'
 exit 0

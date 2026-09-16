@@ -22,7 +22,7 @@ only an opinion held firmly.
 
 ## What is deliberately not mapped, and why
 
-- **A CWE that no 2025 category covers gets no OWASP row.** Eight are in that position and
+- **A CWE that no 2025 category covers gets no OWASP row.** Seven are in that position and
   each says so on its own line. Assigning them to the nearest-sounding category would make
   the file look complete and be wrong, and a false citation is worse than a missing one.
 - **SLSA build levels, OWASP SAMM and ISO 27001 Annex A are not mapped.** SAMM and ISO
@@ -166,9 +166,9 @@ appears on none of the ten published lists.
 **SEC-API-03**
 
 - SSDF: PW.1.1, PW.5.1
-- OWASP Top 10 2025: none. No 2025 category lists this rule's CWE.
-- CWE: CWE-213 Exposure of Sensitive Information Due to Incompatible Policies (no 2025 category)
-- Note: CWE-213 is on no 2025 category list, so no OWASP row is claimed for it.
+- OWASP Top 10 2025: A01:2025 Broken Access Control
+- CWE: CWE-201 Insertion of Sensitive Information Into Sent Data
+- Note: Sensitive data inserted into a response is filed under access control in the 2025 edition.
 
 **SEC-API-04**
 

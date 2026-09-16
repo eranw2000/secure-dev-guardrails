@@ -136,18 +136,21 @@ rules:
           metavariable: $JWT
           regex: (?i).*(jwt|jsonwebtoken|token).*
 
-  # SEC-API-02, mass assignment. Every pattern below hands the client's field choice to a write:
-  # a serializer or model form with fields = "__all__", request data unpacked into a create or
-  # update, a loop copying request keys onto an object, or a request body passed whole to an
-  # ORM call. A Sequelize write that passes a fields list is excluded, because that list is the
-  # allowlist the rule asks for. The class check keeps a django-filter FilterSet quiet.
+  # SEC-API-02, mass assignment. Each rule below reports a write whose field list the client
+  # chooses: a serializer or model form with fields = "__all__", request data unpacked into a
+  # Django ORM call or a model constructor, a loop copying request keys onto an object, or a
+  # request body passed whole to a model write. Receivers are constrained to model-shaped names
+  # (a `.objects` manager, a capitalised class, a Prisma delegate) so a plain dict or a service
+  # call is not reported. A Sequelize write that passes a fields list is excluded, because that
+  # list is the allowlist the rule asks for.
   - id: SEC-API-02-python-all-fields
     languages: [python]
     severity: ERROR
     message: >
-      SEC-API-02: this serializer or model form includes every model field, so the client can
-      write, and read back, any field the model has now or gains later. List the fields explicitly
-      and mark server-owned ones read-only. See security-standards.md.
+      SEC-API-02: fields = "__all__" includes every eligible model field, so a field added to
+      the model later becomes reachable through this form or serializer, writable unless it is
+      marked read-only or not editable, without anybody listing it. List the fields explicitly.
+      See security-standards.md.
     patterns:
       - pattern-either:
           - pattern-inside: |
@@ -164,31 +167,45 @@ rules:
             ...
       - pattern: fields = "__all__"
 
-  - id: SEC-API-02-python-request-unpacked
+  - id: SEC-API-02-python-orm-request-unpacked
     languages: [python]
     severity: ERROR
     message: >
-      SEC-API-02: request data is unpacked straight into a create or update call, so the client
-      decides which fields are written. Pass the allowed fields by name. See security-
-      standards.md.
-    pattern-either:
-      - pattern: $X.create(..., **request.$A, ...)
-      - pattern: $X.update(..., **request.$A, ...)
-      - pattern: $X.get_or_create(..., **request.$A, ...)
-      - pattern: $X.update_or_create(..., **request.$A, ...)
-      - pattern: $X.create(..., **request.$F(...), ...)
-      - pattern: $X.update(..., **request.$F(...), ...)
-      - pattern: $X.create(..., **request.$A.$F(...), ...)
-      - pattern: $X.update(..., **request.$A.$F(...), ...)
-      - pattern: $X.update_or_create(..., defaults=request.$A, ...)
+      SEC-API-02: request data goes straight into a model manager call, so the client decides
+      which fields are written. Pass the allowed fields by name. See security-standards.md.
+    patterns:
+      - pattern-either:
+          - pattern: $RECV.$METHOD(..., **request.$A, ...)
+          - pattern: $RECV.$METHOD(..., **request.$A.$F(...), ...)
+          - pattern: $RECV.$METHOD(..., defaults=request.$A, ...)
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: ^(create|update|get_or_create|update_or_create)$
+      - metavariable-regex:
+          metavariable: $RECV
+          regex: ^.*\.objects(\.|$)
+
+  - id: SEC-API-02-python-constructor-request-unpacked
+    languages: [python]
+    severity: ERROR
+    message: >
+      SEC-API-02: request data is unpacked into a model constructor, so the client decides which
+      attributes are set. Pass the allowed fields by name. See security-standards.md.
+    patterns:
+      - pattern-either:
+          - pattern: $CLS(..., **request.$A, ...)
+          - pattern: $CLS(..., **request.$F(...), ...)
+      - metavariable-regex:
+          metavariable: $CLS
+          regex: ^([a-z_][A-Za-z0-9_]*\.)*[A-Z][A-Za-z0-9_]*$
 
   - id: SEC-API-02-python-setattr-loop
     languages: [python]
     severity: ERROR
     message: >
       SEC-API-02: every key in the request is copied onto the object, so the client decides which
-      attributes change. Loop over an allowlist of writable fields instead. See security-
-      standards.md.
+      attributes change. Loop over an allowlist of writable fields instead. See
+      security-standards.md.
     pattern-either:
       - pattern: |
           for $K, $V in request.$A.items():
@@ -199,33 +216,111 @@ rules:
             ...
             setattr($O, $K, $V)
 
-  - id: SEC-API-02-js-request-body-write
+  - id: SEC-API-02-js-model-write
     languages: [javascript, typescript]
     severity: ERROR
     message: >
-      SEC-API-02: the whole request body goes into a database write, so the client decides which
+      SEC-API-02: the whole request body goes into a model write, so the client decides which
       fields are written. Pick the allowed fields from the body first, or pass a fields list where
       the ORM takes one. See security-standards.md.
     patterns:
       - pattern-either:
+          - pattern: $M.$WRITE($REQ.body)
+          - pattern: $M.$WRITE($REQ.body, $OPT)
+          - pattern: $M.$WRITE({..., ...$REQ.body, ...})
+      - pattern-not: '$M.$WRITE($REQ.body, {..., fields: $F, ...})'
+      - metavariable-regex:
+          metavariable: $WRITE
+          regex: ^(create|insertMany|bulkCreate|build|update)$
+      - metavariable-regex:
+          metavariable: $M
+          regex: ^([A-Za-z_$][A-Za-z0-9_$]*\.)*[A-Z][A-Za-z0-9_$]*$
+      - metavariable-regex:
+          metavariable: $REQ
+          regex: ^(req|request|ctx\.request)$
+
+  - id: SEC-API-02-js-model-update-by-filter
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      SEC-API-02: the whole request body is the update document, so the client decides which
+      fields change. Build the update from the allowed fields. See security-standards.md.
+    patterns:
+      - pattern: $M.$UPD($Q, $REQ.body, ...)
+      - metavariable-regex:
+          metavariable: $UPD
+          regex: ^(findByIdAndUpdate|findOneAndUpdate|updateOne|updateMany)$
+      - metavariable-regex:
+          metavariable: $M
+          regex: ^([A-Za-z_$][A-Za-z0-9_$]*\.)*[A-Z][A-Za-z0-9_$]*$
+      - metavariable-regex:
+          metavariable: $REQ
+          regex: ^(req|request|ctx\.request)$
+
+  - id: SEC-API-02-js-model-constructor
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      SEC-API-02: a model is constructed from the whole request body, so the client decides which
+      fields it holds when it is saved. Pass the allowed fields. See security-standards.md.
+    patterns:
+      - pattern: new $M($REQ.body)
+      - metavariable-regex:
+          metavariable: $M
+          regex: ^(?!(Error|URLSearchParams|Map|Set|Date|Blob|Response|Request|Headers|FormData|Buffer|Promise|Array|Object|String|Number)$)[A-Z][A-Za-z0-9_$]*$
+      - metavariable-regex:
+          metavariable: $REQ
+          regex: ^(req|request|ctx\.request)$
+
+  - id: SEC-API-02-js-document-assigned-then-saved
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      SEC-API-02: the whole request body is copied onto a document that is then saved, so the
+      client decides which fields change. Copy the allowed fields only. See security-standards.md.
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              Object.assign($O, $REQ.body);
+              ...
+              $O.save(...);
+          - pattern-inside: |
+              $O.set($REQ.body);
+              ...
+              $O.save(...);
+      - pattern-either:
           - pattern: Object.assign($O, $REQ.body)
-          - pattern: $M.create($REQ.body)
-          - pattern: $M.insertMany($REQ.body, ...)
-          - pattern: $M.findByIdAndUpdate($ID, $REQ.body, ...)
-          - pattern: $M.findOneAndUpdate($Q, $REQ.body, ...)
-          - pattern: $M.updateOne($Q, $REQ.body, ...)
-          - pattern: $M.updateMany($Q, $REQ.body, ...)
-          - pattern: $M.create($REQ.body, $OPT)
-          - pattern: $M.update($REQ.body, $OPT)
-          - pattern: $M.bulkCreate($REQ.body, ...)
-          - pattern: $M.create({..., ...$REQ.body, ...})
-          - pattern: '$P.$M.create({..., data: $REQ.body, ...})'
-          - pattern: '$P.$M.update({..., data: $REQ.body, ...})'
-          - pattern: '$P.$M.upsert({..., create: $REQ.body, ...})'
-          - pattern: '$P.$M.upsert({..., update: $REQ.body, ...})'
-      - pattern-not: '$M.create($REQ.body, {..., fields: $F, ...})'
-      - pattern-not: '$M.update($REQ.body, {..., fields: $F, ...})'
-      - pattern-not: '$M.bulkCreate($REQ.body, {..., fields: $F, ...})'
+          - pattern: $O.set($REQ.body)
+      - metavariable-regex:
+          metavariable: $REQ
+          regex: ^(req|request|ctx\.request)$
+
+  - id: SEC-API-02-js-prisma-data
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      SEC-API-02: the whole request body is the data of a Prisma write, so the client decides which
+      fields are written. Build the data object from the allowed fields. See
+      security-standards.md.
+    patterns:
+      - pattern: '$P.$T.$PW({..., data: $REQ.body, ...})'
+      - metavariable-regex:
+          metavariable: $PW
+          regex: ^(create|update|createMany|updateMany)$
+      - metavariable-regex:
+          metavariable: $REQ
+          regex: ^(req|request|ctx\.request)$
+
+  - id: SEC-API-02-js-prisma-upsert
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      SEC-API-02: the whole request body is one half of a Prisma upsert, so the client decides which
+      fields are written. Build that half from the allowed fields. See security-standards.md.
+    patterns:
+      - pattern-either:
+          - pattern: '$P.$T.upsert({..., create: $REQ.body, ...})'
+          - pattern: '$P.$T.upsert({..., update: $REQ.body, ...})'
       - metavariable-regex:
           metavariable: $REQ
           regex: ^(req|request|ctx\.request)$

@@ -9,8 +9,9 @@ semgrep's default ignore list and comes back as a clean sheet. A missing semgrep
 The lines semgrep must report are read from `EXPECT SEC-API-02` markers in the fixtures, so a
 case added to a fixture is a case this test requires.
 
-The hook is checked per pattern: each `sec_api_02_hook_*` fixture holds one case, so deleting
-any single alternation from the hook turns exactly that fixture's check red.
+The hook is checked per pattern: each `sec_api_02_hook_*` fixture holds one case for one pattern,
+or for one method or key name inside a pattern, so a narrowed pattern shows up as a red check
+rather than hiding behind a sibling case in a larger fixture.
 """
 
 from __future__ import annotations
@@ -31,8 +32,10 @@ MARKER = "EXPECT " + RULE_ID
 
 SEMGREP_FILES = [
     "sec_api_02_bad.py",
+    "sec_api_02_bad_no_import.py",
     "sec_api_02_good.py",
     "sec_api_02_bad.js",
+    "sec_api_02_bad.ts",
     "sec_api_02_good.js",
 ]
 
@@ -47,20 +50,41 @@ HOOK_EXPECT = {
     "sec_api_02_good.py": False,
     "sec_api_02_bad.js": True,
     "sec_api_02_good.js": False,
-    # One case per alternation.
-    "sec_api_02_hook_all_fields.py": True,
-    "sec_api_02_hook_unpack.py": True,
-    "sec_api_02_hook_defaults.py": True,
-    "sec_api_02_hook_object_assign.js": True,
+    # One case per hook pattern and per method or key name inside it. Names ending in _control
+    # are the look-alikes a pattern must leave alone: a FilterSet beside an explicit serializer, a
+    # plain dict or service call, a built-in constructor, a Sequelize call with an options object,
+    # and a copy that writes nothing.
+    "sec_api_02_hook_all_fields_form.py": True,
+    "sec_api_02_hook_all_fields_serializer.py": True,
+    "sec_api_02_hook_build.js": True,
+    "sec_api_02_hook_bulk_create.js": True,
+    "sec_api_02_hook_constructor.js": True,
+    "sec_api_02_hook_constructor.py": True,
+    "sec_api_02_hook_constructor_builtin_control.js": False,
+    "sec_api_02_hook_constructor_module.py": True,
     "sec_api_02_hook_create.js": True,
-    "sec_api_02_hook_find_update.js": True,
-    "sec_api_02_hook_update.js": True,
-    "sec_api_02_hook_prisma_data.js": True,
-    "sec_api_02_hook_prisma_upsert.js": True,
-    # Negatives with a reason each: a django-filter FilterSet also takes fields = "__all__" and
-    # writes nothing, and a Sequelize write with a fields list is the allowlist the rule asks for.
-    "sec_api_02_hook_filterset_control.py": False,
-    "sec_api_02_hook_fields_control.js": False,
+    "sec_api_02_hook_create_cast.ts": True,
+    "sec_api_02_hook_create_ctx_body.js": True,
+    "sec_api_02_hook_create_request_body.js": True,
+    "sec_api_02_hook_create_spread.js": True,
+    "sec_api_02_hook_dict_update_control.py": False,
+    "sec_api_02_hook_find_by_id_update.js": True,
+    "sec_api_02_hook_find_one_update.js": True,
+    "sec_api_02_hook_insert_many.js": True,
+    "sec_api_02_hook_manager_create.py": True,
+    "sec_api_02_hook_manager_defaults.py": True,
+    "sec_api_02_hook_manager_update.py": True,
+    "sec_api_02_hook_mixed_filterset_control.py": False,
+    "sec_api_02_hook_object_assign_copy_control.js": False,
+    "sec_api_02_hook_prisma_create.js": True,
+    "sec_api_02_hook_prisma_create_many.js": True,
+    "sec_api_02_hook_prisma_update.js": True,
+    "sec_api_02_hook_prisma_update_many.js": True,
+    "sec_api_02_hook_prisma_upsert_create.js": True,
+    "sec_api_02_hook_prisma_upsert_update.js": True,
+    "sec_api_02_hook_sequelize_options_control.js": False,
+    "sec_api_02_hook_update_many.js": True,
+    "sec_api_02_hook_update_one.js": True,
 }
 
 failures: list[str] = []

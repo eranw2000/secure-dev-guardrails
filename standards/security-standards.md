@@ -113,9 +113,9 @@ may ask for at once, and whether the same request can take effect twice.
   admin or internal prefix deny by default and grant by name.
 - **SEC-API-02 (Blocker):** A write binds an explicit allowlist of the fields the client may
   set. Never hand the whole request body to a model constructor, an ORM create or update call,
-  or a form or serializer that includes every model field (`fields = "__all__"`). Fields the
-  server owns, such as ids, owner, role, permissions, balance, price, status and audit
-  timestamps, are set by server code only. Prefer `fields` to `exclude`: an allowlist keeps a
+  or a form or serializer that includes every eligible model field (`fields = "__all__"`).
+  Fields the server owns, such as ids, owner, role, permissions, balance, price, status and
+  audit timestamps, are set by server code only. Prefer `fields` to `exclude`: an allowlist keeps a
   field added to the model later out of the client's reach until somebody lists it.
 - **SEC-API-03 (Major):** A response is built from an explicit field list or a response
   schema, never by serializing a whole model or ORM object, so a field added to the model later
@@ -132,8 +132,10 @@ may ask for at once, and whether the same request can take effect twice.
   rows gets the maximum.
 - **SEC-API-06 (Major):** A state-changing request that can arrive more than once, such as a
   signed webhook, a payment callback or a retried client call, takes effect once. A signed
-  request is verified over the raw body with a constant-time comparison, and rejected when its
-  timestamp falls outside a short window. An action with a real-world effect (charging, sending,
+  request is verified exactly as its signature scheme specifies, with the provider's or a vetted
+  library's verification call; for an HMAC over the request body, that means the raw bytes as
+  received and a constant-time comparison. Where the scheme carries a timestamp, a request
+  outside a short window is rejected. An action with a real-world effect (charging, sending,
   provisioning) records the event id or an idempotency key and treats a repeat as a no-op.
 
 ## Crypto and transport
@@ -253,10 +255,12 @@ payment or personal-data one.
   SEC-PATH-01, SEC-PATH-02, SEC-LOG-01, SEC-SECRET-03, SEC-API-02.
 
 `SEC-API-02` is also checked by the semgrep rules in `ci/semgrep/security.yml`, which read the
-structure of a Python or JavaScript file: a serializer or model form with `fields = "__all__"`,
-request data unpacked into a create or update call, a loop that copies request data onto an
-object, and a request body passed whole to an ORM write. A Sequelize write that passes a
-`fields` list is left alone, because that list is the allowlist the rule asks for.
+structure of a Python, JavaScript or TypeScript file: a serializer or model form with
+`fields = "__all__"`, request data unpacked into a Django manager call or a model constructor,
+a loop that copies request data onto an object, a request body passed whole to a model create,
+update, constructor or Prisma write, and a body copied onto a document that is then saved. A
+Sequelize write that passes a `fields` list is left alone, because that list is the allowlist the
+rule asks for.
 
 **Checked by the CI workflow (2).** `ci/check-workflow-hardening.sh` reads the repository's
 own workflow files. The `workflow-hardening` job runs it, and pre-commit runs it on a workflow

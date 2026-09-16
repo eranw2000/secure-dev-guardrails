@@ -1,4 +1,4 @@
-# The safe shapes of the same operations. Nothing here may be reported as SEC-API-02.
+# The safe shapes, and look-alikes that are not model writes. Nothing here is SEC-API-02.
 import django_filters
 from rest_framework import serializers
 
@@ -15,15 +15,20 @@ class AccountSerializer(serializers.ModelSerializer):
 class AccountFilter(django_filters.FilterSet):
     class Meta:
         model = Account
-        fields = ["display_name"]
+        fields = "__all__"
 
 
 def create_account(request):
     Account.objects.create(display_name=request.data["display_name"], owner=request.user)
 
 
+def not_a_model(request, payload, service):
+    payload.update(**request.data)
+    service.create(**request.data)
+    return dict(**request.json)
+
+
 def copy_fields(request, account):
     for key in WRITABLE:
         if key in request.data:
             setattr(account, key, request.data[key])
-    account.save()

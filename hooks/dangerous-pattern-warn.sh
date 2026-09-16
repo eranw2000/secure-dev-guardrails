@@ -87,14 +87,17 @@ case "$FILE_PATH" in
       && add "SEC-INJ-01" "SQL built by string formatting/concatenation"
     grep -Eqn 'open[[:space:]]*\([^)]*(request|input|argv|params)' "$FILE_PATH" \
       && add "SEC-PATH-01" "file path from untrusted input (check for traversal)"
-    # SEC-API-02: a serializer or model form that includes every field. The class check keeps a
-    # django-filter FilterSet, which also accepts fields = "__all__" and writes nothing, quiet.
-    if grep -Eq 'fields[[:space:]]*=[[:space:]]*["'\'']__all__["'\'']' "$FILE_PATH" \
-      && grep -Eq '(ModelSerializer|ModelForm)' "$FILE_PATH"; then
-      add "SEC-API-02" "serializer or model form with fields = \"__all__\" (list the fields the client may write and read)"
-    fi
-    grep -Eqn '(create|update|get_or_create|update_or_create)[[:space:]]*\([^)]*\*\*[[:space:]]*request\.|defaults[[:space:]]*=[[:space:]]*request\.(data|POST|json|form)([^.A-Za-z_]|$)' "$FILE_PATH" \
-      && add "SEC-API-02" "request data unpacked into a create or update call (bind an allowlist of fields)"
+    # SEC-API-02: a serializer or model form whose own Meta says fields = "__all__". awk remembers
+    # the bases of the last top-level class, so a FilterSet in the same module as an explicit
+    # serializer is not reported.
+    awk '/^class[ \t]/ { bases = $0 } /^[ \t]+fields[ \t]*=[ \t]*["'\'']__all__["'\'']/ { if (bases ~ /(ModelSerializer|ModelForm)/) found = 1 } END { exit !found }' "$FILE_PATH" \
+      && add "SEC-API-02" "serializer or model form with fields = \"__all__\" (list the fields explicitly)"
+    # SEC-API-02: request data unpacked into a Django manager call, or into a capitalised model
+    # constructor. A plain dict or a service object is not a model write, so neither is matched.
+    grep -Eqn '\.objects\..*(create|update)[[:space:]]*\([^)]*(\*\*[[:space:]]*request\.|defaults[[:space:]]*=[[:space:]]*request\.)' "$FILE_PATH" \
+      && add "SEC-API-02" "request data passed whole to a model manager call (bind an allowlist of fields)"
+    grep -Eqn '(^|[^A-Za-z0-9_.])([a-z_][A-Za-z0-9_]*\.)*[A-Z][A-Za-z0-9_]*[[:space:]]*\([^)]*\*\*[[:space:]]*request\.' "$FILE_PATH" \
+      && add "SEC-API-02" "request data unpacked into a model constructor (bind an allowlist of fields)"
     ;;
   *.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs)
     grep -Eqn '(^|[^A-Za-z0-9_])eval[[:space:]]*\(|new Function[[:space:]]*\(|child_process|\.exec[[:space:]]*\(|execSync[[:space:]]*\(' "$FILE_PATH" \
@@ -103,12 +106,19 @@ case "$FILE_PATH" in
       && add "SEC-WEB-01" "untrusted data into innerHTML/dangerouslySetInnerHTML/document.write"
     grep -Eqn 'query[[:space:]]*\([[:space:]]*`[^`]*\$\{|query[[:space:]]*\([[:space:]]*["'\''][^"'\'']*["'\''][[:space:]]*\+|\.raw[[:space:]]*\(' "$FILE_PATH" \
       && add "SEC-INJ-01" "SQL built by template literal/concatenation"
-    # SEC-API-02: the whole request body handed to an ORM write. A line that passes a `fields:`
-    # list is left alone, because that list is the allowlist the rule asks for (Sequelize).
-    if grep -E 'Object\.assign[[:space:]]*\([^,]+,[[:space:]]*(req|request|ctx\.request)\.body[[:space:]]*\)|\.(create|insertMany|bulkCreate)[[:space:]]*\([[:space:]]*(\{[[:space:]]*\.\.\.[[:space:]]*)?(req|request|ctx\.request)\.body([^.A-Za-z_]|$)|\.(findByIdAndUpdate|findOneAndUpdate|updateOne|updateMany)[[:space:]]*\([^,]+,[[:space:]]*(req|request|ctx\.request)\.body([^.A-Za-z_]|$)|\.update[[:space:]]*\([[:space:]]*(req|request|ctx\.request)\.body([^.A-Za-z_]|$)|(data|create|update)[[:space:]]*:[[:space:]]*(req|request|ctx\.request)\.body([^.A-Za-z_]|$)' "$FILE_PATH" \
-      | grep -Evq 'fields[[:space:]]*:'; then
-      add "SEC-API-02" "request body passed whole to a database write (bind an allowlist of fields)"
-    fi
+    # SEC-API-02: the whole request body in a single-line model write. Only shapes that are unsafe
+    # as written are matched here: a one-argument create, a filter-and-update whose second argument
+    # is the body, a Prisma data object, and a constructor. A Sequelize call with an options
+    # object, which may carry a fields allowlist, is left to the semgrep rule that reads the call.
+    grep -Eqn '[A-Z][A-Za-z0-9_$]*\.(create|insertMany|bulkCreate|build)[[:space:]]*\([[:space:]]*((req|request|ctx\.request)\.body([[:space:]]+as[[:space:]]+[A-Za-z0-9_$.<>]+)?[[:space:]]*\)|\{[[:space:]]*\.\.\.[[:space:]]*(req|request|ctx\.request)\.body([[:space:]]+as[[:space:]]+[A-Za-z0-9_$.<>]+)?([^.A-Za-z_]|$))' "$FILE_PATH" \
+      && add "SEC-API-02" "request body passed whole to a model create (bind an allowlist of fields)"
+    grep -Eqn '[A-Z][A-Za-z0-9_$]*\.(findByIdAndUpdate|findOneAndUpdate|updateOne|updateMany)[[:space:]]*\(.*,[[:space:]]*(req|request|ctx\.request)\.body([[:space:]]+as[[:space:]]+[A-Za-z0-9_$.<>]+)?[[:space:]]*[,)]' "$FILE_PATH" \
+      && add "SEC-API-02" "request body used as the whole update document (bind an allowlist of fields)"
+    grep -Eqn '\.(create|update|createMany|updateMany|upsert)[[:space:]]*\([[:space:]]*\{.*(data|create|update)[[:space:]]*:[[:space:]]*(req|request|ctx\.request)\.body([[:space:]]+as[[:space:]]+[A-Za-z0-9_$.<>]+)?([^.A-Za-z_]|$)' "$FILE_PATH" \
+      && add "SEC-API-02" "request body passed whole as Prisma write data (bind an allowlist of fields)"
+    grep -En 'new[[:space:]]+[A-Z][A-Za-z0-9_$]*[[:space:]]*\([[:space:]]*(req|request|ctx\.request)\.body([[:space:]]+as[[:space:]]+[A-Za-z0-9_$.<>]+)?[[:space:]]*\)' "$FILE_PATH" \
+      | grep -Evq 'new[[:space:]]+(Error|URLSearchParams|Map|Set|Date|Blob|Response|Request|Headers|FormData|Buffer|Promise|Array|Object|String|Number)[[:space:]]*\(' \
+      && add "SEC-API-02" "model constructed from the whole request body (bind an allowlist of fields)"
     ;;
   *.java|*.cs)
     grep -Eqn 'ObjectInputStream|readObject[[:space:]]*\(|XMLDecoder|BinaryFormatter|Runtime\.getRuntime\(\)\.exec|ProcessBuilder\([^)]*\+' "$FILE_PATH" \

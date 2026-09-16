@@ -1,10 +1,18 @@
-// The safe shapes of the same operations. Nothing here may be reported as SEC-API-02.
-app.post("/accounts/:id", async (req, res) => {
+// The safe shapes, and look-alikes that are not model writes. Nothing here is SEC-API-02.
+async function safe(req, res, service) {
   const { displayName, timezone } = req.body;
   await Account.create({ displayName, timezone, owner: req.user.id });
   await Account.create(req.body, { fields: ["displayName", "timezone"] });
-  await Account.update(req.body, { where: { id: req.params.id }, fields: ["displayName"] });
+  await Account.update(req.body, {
+    where: { id: req.params.id },
+    fields: ["displayName"],
+  });
   await prisma.account.update({ where: { id: req.params.id }, data: { displayName } });
-  logger.info({ body: req.body.displayName });
+  const dto = Object.assign({}, req.body);
+  const copy = Object.assign(draft, req.body);
+  await service.create(req.body);
+  const failure = new Error(req.body);
+  res.set(req.body);
+  await axios.post(url, { data: req.body });
   res.json({ displayName, timezone });
-});
+}

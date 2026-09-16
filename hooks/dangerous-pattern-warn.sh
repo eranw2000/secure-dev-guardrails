@@ -5,7 +5,7 @@
 #
 # Wired as a PostToolUse hook on Edit/Write. Reads the file on disk after the edit and greps
 # for language-specific dangerous patterns (SEC-INJ, SEC-WEB-01, SEC-CRYPTO-01, SEC-PATH-01,
-# SEC-AUTH-03).
+# SEC-AUTH-03, SEC-API-02).
 #
 # Protocol: read JSON from stdin, emit hookSpecificOutput.additionalContext WITH
 # hookEventName:"PostToolUse" (the field is required or the context is dropped), exit 0.
@@ -87,6 +87,14 @@ case "$FILE_PATH" in
       && add "SEC-INJ-01" "SQL built by string formatting/concatenation"
     grep -Eqn 'open[[:space:]]*\([^)]*(request|input|argv|params)' "$FILE_PATH" \
       && add "SEC-PATH-01" "file path from untrusted input (check for traversal)"
+    # SEC-API-02: a serializer or model form that includes every field. The class check keeps a
+    # django-filter FilterSet, which also accepts fields = "__all__" and writes nothing, quiet.
+    if grep -Eq 'fields[[:space:]]*=[[:space:]]*["'\'']__all__["'\'']' "$FILE_PATH" \
+      && grep -Eq '(ModelSerializer|ModelForm)' "$FILE_PATH"; then
+      add "SEC-API-02" "serializer or model form with fields = \"__all__\" (list the fields the client may write and read)"
+    fi
+    grep -Eqn '(create|update|get_or_create|update_or_create)[[:space:]]*\([^)]*\*\*[[:space:]]*request\.|defaults[[:space:]]*=[[:space:]]*request\.(data|POST|json|form)([^.A-Za-z_]|$)' "$FILE_PATH" \
+      && add "SEC-API-02" "request data unpacked into a create or update call (bind an allowlist of fields)"
     ;;
   *.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs)
     grep -Eqn '(^|[^A-Za-z0-9_])eval[[:space:]]*\(|new Function[[:space:]]*\(|child_process|\.exec[[:space:]]*\(|execSync[[:space:]]*\(' "$FILE_PATH" \
@@ -95,6 +103,12 @@ case "$FILE_PATH" in
       && add "SEC-WEB-01" "untrusted data into innerHTML/dangerouslySetInnerHTML/document.write"
     grep -Eqn 'query[[:space:]]*\([[:space:]]*`[^`]*\$\{|query[[:space:]]*\([[:space:]]*["'\''][^"'\'']*["'\''][[:space:]]*\+|\.raw[[:space:]]*\(' "$FILE_PATH" \
       && add "SEC-INJ-01" "SQL built by template literal/concatenation"
+    # SEC-API-02: the whole request body handed to an ORM write. A line that passes a `fields:`
+    # list is left alone, because that list is the allowlist the rule asks for (Sequelize).
+    if grep -E 'Object\.assign[[:space:]]*\([^,]+,[[:space:]]*(req|request|ctx\.request)\.body[[:space:]]*\)|\.(create|insertMany|bulkCreate)[[:space:]]*\([[:space:]]*(\{[[:space:]]*\.\.\.[[:space:]]*)?(req|request|ctx\.request)\.body([^.A-Za-z_]|$)|\.(findByIdAndUpdate|findOneAndUpdate|updateOne|updateMany)[[:space:]]*\([^,]+,[[:space:]]*(req|request|ctx\.request)\.body([^.A-Za-z_]|$)|\.update[[:space:]]*\([[:space:]]*(req|request|ctx\.request)\.body([^.A-Za-z_]|$)|(data|create|update)[[:space:]]*:[[:space:]]*(req|request|ctx\.request)\.body([^.A-Za-z_]|$)' "$FILE_PATH" \
+      | grep -Evq 'fields[[:space:]]*:'; then
+      add "SEC-API-02" "request body passed whole to a database write (bind an allowlist of fields)"
+    fi
     ;;
   *.java|*.cs)
     grep -Eqn 'ObjectInputStream|readObject[[:space:]]*\(|XMLDecoder|BinaryFormatter|Runtime\.getRuntime\(\)\.exec|ProcessBuilder\([^)]*\+' "$FILE_PATH" \

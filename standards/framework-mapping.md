@@ -22,7 +22,7 @@ only an opinion held firmly.
 
 ## What is deliberately not mapped, and why
 
-- **A CWE that no 2025 category covers gets no OWASP row.** Five are in that position and
+- **A CWE that no 2025 category covers gets no OWASP row.** Eight are in that position and
   each says so on its own line. Assigning them to the nearest-sounding category would make
   the file look complete and be wrong, and a false citation is worse than a missing one.
 - **SLSA build levels, OWASP SAMM and ISO 27001 Annex A are not mapped.** SAMM and ISO
@@ -148,6 +148,48 @@ appears on none of the ten published lists.
 - OWASP Top 10 2025: none. No 2025 category lists this rule's CWE.
 - CWE: CWE-204 Observable Response Discrepancy (no 2025 category)
 - Note: CWE-204 is on no 2025 category list, so no OWASP row is claimed for it.
+
+**SEC-API-01**
+
+- SSDF: PW.1.1, PW.5.1
+- OWASP Top 10 2025: A01:2025 Broken Access Control
+- CWE: CWE-285 Improper Authorization; CWE-862 Missing Authorization
+- Note: Function-level authorization sits in the same first category as object-level authorization: both are access control.
+
+**SEC-API-02**
+
+- SSDF: PW.5.1
+- OWASP Top 10 2025: A08:2025 Software or Data Integrity Failures
+- CWE: CWE-915 Improperly Controlled Modification of Dynamically-Determined Object Attributes
+- Note: Not the obvious guess: the 2025 edition lists CWE-915 under integrity failures rather than access control.
+
+**SEC-API-03**
+
+- SSDF: PW.1.1, PW.5.1
+- OWASP Top 10 2025: none. No 2025 category lists this rule's CWE.
+- CWE: CWE-213 Exposure of Sensitive Information Due to Incompatible Policies (no 2025 category)
+- Note: CWE-213 is on no 2025 category list, so no OWASP row is claimed for it.
+
+**SEC-API-04**
+
+- SSDF: PW.1.3, PW.9.1
+- OWASP Top 10 2025: A06:2025 Insecure Design
+- CWE: CWE-770 Allocation of Resources Without Limits or Throttling (no 2025 category); CWE-799 Improper Control of Interaction Frequency
+- Note: Two weaknesses: no limit on the resources a request consumes, and no limit on how often it is sent. Only the second has a 2025 category, insecure design. A limit is a configured baseline, hence PW.9.1.
+
+**SEC-API-05**
+
+- SSDF: PW.5.1
+- OWASP Top 10 2025: none. No 2025 category lists this rule's CWE.
+- CWE: CWE-770 Allocation of Resources Without Limits or Throttling (no 2025 category)
+- Note: CWE-770 is on no 2025 category list, so no OWASP row is claimed for it.
+
+**SEC-API-06**
+
+- SSDF: PW.1.3, PW.5.1
+- OWASP Top 10 2025: A07:2025 Authentication Failures
+- CWE: CWE-294 Authentication Bypass by Capture-replay; CWE-837 Improper Enforcement of a Single, Unique Action (no 2025 category)
+- Note: Two weaknesses: a captured request accepted again, which the 2025 edition files under authentication, and an action with a single intended effect applied more than once.
 
 **SEC-CRYPTO-01**
 

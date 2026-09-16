@@ -135,3 +135,97 @@ rules:
       - metavariable-regex:
           metavariable: $JWT
           regex: (?i).*(jwt|jsonwebtoken|token).*
+
+  # SEC-API-02, mass assignment. Every pattern below hands the client's field choice to a write:
+  # a serializer or model form with fields = "__all__", request data unpacked into a create or
+  # update, a loop copying request keys onto an object, or a request body passed whole to an
+  # ORM call. A Sequelize write that passes a fields list is excluded, because that list is the
+  # allowlist the rule asks for. The class check keeps a django-filter FilterSet quiet.
+  - id: SEC-API-02-python-all-fields
+    languages: [python]
+    severity: ERROR
+    message: >
+      SEC-API-02: this serializer or model form includes every model field, so the client can
+      write, and read back, any field the model has now or gains later. List the fields explicitly
+      and mark server-owned ones read-only. See security-standards.md.
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              class $C(..., $B, ...):
+                ...
+          - pattern-inside: |
+              class $C(..., $M.$B, ...):
+                ...
+      - metavariable-regex:
+          metavariable: $B
+          regex: ^(ModelSerializer|HyperlinkedModelSerializer|ModelForm)$
+      - pattern-inside: |
+          class Meta:
+            ...
+      - pattern: fields = "__all__"
+
+  - id: SEC-API-02-python-request-unpacked
+    languages: [python]
+    severity: ERROR
+    message: >
+      SEC-API-02: request data is unpacked straight into a create or update call, so the client
+      decides which fields are written. Pass the allowed fields by name. See security-
+      standards.md.
+    pattern-either:
+      - pattern: $X.create(..., **request.$A, ...)
+      - pattern: $X.update(..., **request.$A, ...)
+      - pattern: $X.get_or_create(..., **request.$A, ...)
+      - pattern: $X.update_or_create(..., **request.$A, ...)
+      - pattern: $X.create(..., **request.$F(...), ...)
+      - pattern: $X.update(..., **request.$F(...), ...)
+      - pattern: $X.create(..., **request.$A.$F(...), ...)
+      - pattern: $X.update(..., **request.$A.$F(...), ...)
+      - pattern: $X.update_or_create(..., defaults=request.$A, ...)
+
+  - id: SEC-API-02-python-setattr-loop
+    languages: [python]
+    severity: ERROR
+    message: >
+      SEC-API-02: every key in the request is copied onto the object, so the client decides which
+      attributes change. Loop over an allowlist of writable fields instead. See security-
+      standards.md.
+    pattern-either:
+      - pattern: |
+          for $K, $V in request.$A.items():
+            ...
+            setattr($O, $K, $V)
+      - pattern: |
+          for $K, $V in request.$F(...).items():
+            ...
+            setattr($O, $K, $V)
+
+  - id: SEC-API-02-js-request-body-write
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      SEC-API-02: the whole request body goes into a database write, so the client decides which
+      fields are written. Pick the allowed fields from the body first, or pass a fields list where
+      the ORM takes one. See security-standards.md.
+    patterns:
+      - pattern-either:
+          - pattern: Object.assign($O, $REQ.body)
+          - pattern: $M.create($REQ.body)
+          - pattern: $M.insertMany($REQ.body, ...)
+          - pattern: $M.findByIdAndUpdate($ID, $REQ.body, ...)
+          - pattern: $M.findOneAndUpdate($Q, $REQ.body, ...)
+          - pattern: $M.updateOne($Q, $REQ.body, ...)
+          - pattern: $M.updateMany($Q, $REQ.body, ...)
+          - pattern: $M.create($REQ.body, $OPT)
+          - pattern: $M.update($REQ.body, $OPT)
+          - pattern: $M.bulkCreate($REQ.body, ...)
+          - pattern: $M.create({..., ...$REQ.body, ...})
+          - pattern: '$P.$M.create({..., data: $REQ.body, ...})'
+          - pattern: '$P.$M.update({..., data: $REQ.body, ...})'
+          - pattern: '$P.$M.upsert({..., create: $REQ.body, ...})'
+          - pattern: '$P.$M.upsert({..., update: $REQ.body, ...})'
+      - pattern-not: '$M.create($REQ.body, {..., fields: $F, ...})'
+      - pattern-not: '$M.update($REQ.body, {..., fields: $F, ...})'
+      - pattern-not: '$M.bulkCreate($REQ.body, {..., fields: $F, ...})'
+      - metavariable-regex:
+          metavariable: $REQ
+          regex: ^(req|request|ctx\.request)$

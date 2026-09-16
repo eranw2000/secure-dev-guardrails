@@ -13,12 +13,13 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
 
 ## Layout
 
-- `standards/`, the single source of truth. Security rules (SEC-*) including the CI and
-  pipeline rules (SEC-CI-*), the runtime and detection rules (SEC-RUN-*), privacy rules
+- `standards/`, the single source of truth. Security rules (SEC-*) including the
+  authentication rules (SEC-AUTH-*), the API design rules (SEC-API-*), the CI and pipeline
+  rules (SEC-CI-*), the runtime and detection rules (SEC-RUN-*), privacy rules
   (PRIV-*, GDPR + CCPA), AI and agent rules (SEC-AI-*)
   for systems where a model reads outside content, the severity taxonomy, the suppression
   baseline, and the two org policy files that the skills here (and any external review plugin
-  you point at them) read. Everything else cites these IDs. `framework-mapping.md` ties all 58
+  you point at them) read. Everything else cites these IDs. `framework-mapping.md` ties all 70
   rules to NIST SSDF, the OWASP Top 10 2025, CWE, the OWASP LLM Top 10 2025, and GDPR/CCPA, so
   a rule can be defended in an audit rather than only asserted.
 - `hooks/`, Claude Code hooks. `secret-scan.sh` and `pii-in-logs.sh` hard-block;

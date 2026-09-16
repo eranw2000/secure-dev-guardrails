@@ -100,6 +100,44 @@ stored is `SEC-CRYPTO-02`; these rules cover the scheme around it.
   of valid accounts is the input to credential stuffing rather than the attack itself, and the
   taxonomy reserves Nit for a finding with no production consequence of its own.
 
+## API design
+
+`SEC-WEB-02` decides which record a caller may touch. These rules cover the rest of an API's
+contract: which operations the caller may run, which fields it may write and read, how much it
+may ask for at once, and whether the same request can take effect twice.
+
+- **SEC-API-01 (Blocker):** Every privileged operation checks the caller's role or permission
+  on the server, in the handler or in a guard attached to its route. Privileged means an admin
+  action, a change to a role or a permission, a bulk or export endpoint, or anything that acts
+  across accounts or tenants. A hidden button or an unlisted URL is not a check. Routes under an
+  admin or internal prefix deny by default and grant by name.
+- **SEC-API-02 (Blocker):** A write binds an explicit allowlist of the fields the client may
+  set. Never hand the whole request body to a model constructor, an ORM create or update call,
+  or a form or serializer that includes every eligible model field (`fields = "__all__"`).
+  Fields the server owns, such as ids, owner, role, permissions, balance, price, status and
+  audit timestamps, are set by server code only. Prefer `fields` to `exclude`: an allowlist keeps a
+  field added to the model later out of the client's reach until somebody lists it.
+- **SEC-API-03 (Major):** A response is built from an explicit field list or a response
+  schema, never by serializing a whole model or ORM object, so a field added to the model later
+  is not sent until somebody lists it. Password hashes, tokens, internal flags and other users'
+  data stay on the server, and filtering happens on the server rather than in the client.
+- **SEC-API-04 (Major):** Every endpoint has a rate limit sized to its cost, tighter on
+  unauthenticated routes and on expensive ones: search, export, file processing, calls to an AI
+  model, and anything that sends an email or a text message. Requests also have a maximum body
+  size and a timeout. Write the chosen values down with their reason, and keep the counter where
+  every process serving the endpoint reads it, the same way SEC-AUTH-05 does for login.
+- **SEC-API-05 (Major):** List endpoints paginate by default and clamp a client-supplied page
+  size to a server maximum. The same applies to batch sizes, the number of ids accepted in one
+  request, and query depth or complexity on a GraphQL endpoint. A client that asks for a million
+  rows gets the maximum.
+- **SEC-API-06 (Major):** A state-changing request that can arrive more than once, such as a
+  signed webhook, a payment callback or a retried client call, takes effect once. A signed
+  request is verified exactly as its signature scheme specifies, with the provider's or a vetted
+  library's verification call; for an HMAC over the request body, that means the raw bytes as
+  received and a constant-time comparison. Where the scheme carries a timestamp, a request
+  outside a short window is rejected. An action with a real-world effect (charging, sending,
+  provisioning) records the event id or an idempotency key and treats a repeat as a no-op.
+
 ## Crypto and transport
 
 - **SEC-CRYPTO-01 (Blocker):** No disabled TLS verification (`verify=False`,
@@ -202,18 +240,26 @@ in the key names.
 Every rule below has exactly one owner. Nothing is left to "somebody will notice". Reviewed
 2026-08-28, when four rules moved from having no owner into the warning hook and the rest were
 assigned explicitly, again on 2026-09-02 when the four CI rules were added with owners in the
-same edit, and again on 2026-09-03 for the six authentication rules.
+same edit, again on 2026-09-03 for the six authentication rules, and again on 2026-09-16 for
+the six API design rules.
 
 **Blocked by a hook (2).** `secret-scan.sh` refuses the write.
 
 - SEC-SECRET-01, SEC-SECRET-02.
 
-**Warned by a hook (11).** `dangerous-pattern-warn.sh` reads the file after the write and
+**Warned by a hook (12).** `dangerous-pattern-warn.sh` reads the file after the write and
 reports; `sensitive-file-context.sh` adds the relevant rules when the path is an auth, crypto,
 payment or personal-data one.
 
 - SEC-INJ-01, SEC-INJ-02, SEC-INJ-03, SEC-WEB-01, SEC-WEB-04, SEC-CRYPTO-01, SEC-CRYPTO-02,
-  SEC-PATH-01, SEC-PATH-02, SEC-LOG-01, SEC-SECRET-03.
+  SEC-PATH-01, SEC-PATH-02, SEC-LOG-01, SEC-SECRET-03, SEC-API-02.
+
+`SEC-API-02` is also checked by the semgrep rules in `ci/semgrep/security.yml`, which read the
+structure of a Python, JavaScript or TypeScript file: a serializer or model form with
+`fields = "__all__"` in its `Meta`, request data unpacked into a Django manager call or a class
+constructor, a loop that copies request data onto an object, a request body passed whole to a
+model create, update, constructor or Prisma write, and a body copied onto a document that is then
+saved. A write that passes a `fields` list of string literals meets the rule.
 
 **Checked by the CI workflow (2).** `ci/check-workflow-hardening.sh` reads the repository's
 own workflow files. The `workflow-hardening` job runs it, and pre-commit runs it on a workflow
@@ -237,8 +283,8 @@ about the running system and its logging, not about a line of code.
 
 - SEC-RUN-01, SEC-RUN-02, SEC-RUN-03.
 
-**Review-time only (12), and each for a stated reason.** A single-file regex cannot decide these
-without lying, so they belong to `security-review`, `code-reviewer` and a human.
+**Review-time only (17), and each for a stated reason.** Each is decided by reading how several
+parts of the code fit together, so they belong to `security-review`, `code-reviewer` and a human.
 
 - SEC-WEB-02, object-level authorization. Whether a route checks that this caller owns this
   record is a fact about several files at once.
@@ -264,6 +310,17 @@ without lying, so they belong to `security-review`, `code-reviewer` and a human.
 - SEC-AUTH-06, account enumeration. The finding is that two responses differ, so it is a
   comparison between branches rather than a property of either, and timing is not in the text
   at all.
+- SEC-API-01, function-level authorization. Settled by reading the route table against the
+  permission model, because the check usually lives in a decorator, a middleware or a router
+  file rather than beside the handler.
+- SEC-API-03, the shape of a response. Settled by reading what each response is built from,
+  which is often a serializer shared with the write path and declared in another file.
+- SEC-API-04, rate limits, body size and timeouts. Settled by reading the limiter and server
+  configuration, which sits in middleware, a gateway or the hosting platform.
+- SEC-API-05, page and batch size. Settled by reading the pagination settings together with
+  each list endpoint's query.
+- SEC-API-06, a request taking effect twice. Settled by reading the signature check together
+  with the store that records event ids, which sit in different files.
 - SEC-WEB-03, requests to internal addresses. Deciding this needs the origin of the value, which
   is a data-flow question.
 - SEC-CRYPTO-03, hand-rolled cryptography. Recognising that a loop is a cipher is not a pattern

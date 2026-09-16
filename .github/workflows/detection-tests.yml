@@ -22,4 +22,4 @@ jobs:
         shell: bash
         run: |
           pipx install semgrep
-          python3 ci/tests/test_sec_auth_03_detections.py
+          python3 ci/tests/run_detection_tests.py

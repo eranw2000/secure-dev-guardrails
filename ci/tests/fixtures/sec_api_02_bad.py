@@ -61,3 +61,30 @@ def copy_fields(request, account):
 def copy_json_fields(request, account):
     for key, value in request.get_json().items():  # EXPECT SEC-API-02
         setattr(account, key, value)
+
+
+def orm_create_from_call(request):
+    Account.objects.create(**request.get_json())  # EXPECT SEC-API-02
+
+
+def orm_defaults_from_call(request, pk):
+    Account.objects.update_or_create(pk=pk, defaults=request.get_json())  # EXPECT SEC-API-02
+
+
+def constructor_from_chained_call(request):
+    return Account(**request.data.dict())  # EXPECT SEC-API-02
+
+
+class Outer:
+    class NestedSerializer(serializers.ModelSerializer):
+        class Meta:
+            model = Account
+            fields = "__all__"  # EXPECT SEC-API-02
+
+
+class WrappedSerializer(
+    serializers.ModelSerializer,
+):
+    class Meta:
+        model = Account
+        fields = "__all__"  # EXPECT SEC-API-02

@@ -1,6 +1,4 @@
-# Deliberately insecure, and deliberately WITHOUT an import of the base class. semgrep resolves an
-# imported name back to its module, so the dotted-base pattern alone matches every class in
-# sec_api_02_bad.py; only a file with no import exercises the bare-name pattern.
+# Deliberately insecure: a model form whose base class is not imported in this file.
 
 
 class AccountForm(ModelForm):

@@ -2,9 +2,7 @@ from rest_framework import serializers
 
 
 class S(serializers.ModelSerializer):
-    """An account serializer."""
+    fields = "__all__"
 
-    # Every field.
     class Meta:
-
-        fields = "__all__"
+        fields = ["id"]

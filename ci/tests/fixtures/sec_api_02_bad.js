@@ -40,3 +40,13 @@ async function setThenAwaitSave(req, doc) {
   doc.set(req.body); // EXPECT SEC-API-02
   await doc.save();
 }
+
+async function fieldsFromTheClient(req) {
+  await Account.create(req.body, { fields: req.body.fields }); // EXPECT SEC-API-02
+  await Account.update(req.body, { where: { id: req.params.id }, fields: allowed.concat(req.body.extra) }); // EXPECT SEC-API-02
+}
+
+async function chainedSave(req, doc, account) {
+  await doc.set(req.body).save(); // EXPECT SEC-API-02
+  await Object.assign(account, req.body).save(); // EXPECT SEC-API-02
+}

@@ -16,3 +16,18 @@ async function safe(req, res, service) {
   await axios.post(url, { data: req.body });
   res.json({ displayName, timezone });
 }
+
+async function builtIns(req, account, otherId) {
+  const proto = Object.create(req.body);
+  const link = new URL(req.body);
+  const pattern = new RegExp(req.body);
+  Object.assign(account, req.body);
+  account = await Account.findById(otherId);
+  await account.save();
+}
+
+async function setThenReplaced(req, doc, otherId) {
+  doc.set(req.body);
+  doc = await Account.findById(otherId);
+  await doc.save();
+}

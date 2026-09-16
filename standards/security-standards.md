@@ -256,11 +256,10 @@ payment or personal-data one.
 
 `SEC-API-02` is also checked by the semgrep rules in `ci/semgrep/security.yml`, which read the
 structure of a Python, JavaScript or TypeScript file: a serializer or model form with
-`fields = "__all__"`, request data unpacked into a Django manager call or a model constructor,
-a loop that copies request data onto an object, a request body passed whole to a model create,
-update, constructor or Prisma write, and a body copied onto a document that is then saved. A
-Sequelize write that passes a `fields` list is left alone, because that list is the allowlist the
-rule asks for.
+`fields = "__all__"` in its `Meta`, request data unpacked into a Django manager call or a class
+constructor, a loop that copies request data onto an object, a request body passed whole to a
+model create, update, constructor or Prisma write, and a body copied onto a document that is then
+saved. A write that passes a `fields` list of string literals meets the rule.
 
 **Checked by the CI workflow (2).** `ci/check-workflow-hardening.sh` reads the repository's
 own workflow files. The `workflow-hardening` job runs it, and pre-commit runs it on a workflow

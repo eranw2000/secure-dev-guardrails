@@ -136,13 +136,7 @@ rules:
           metavariable: $JWT
           regex: (?i).*(jwt|jsonwebtoken|token).*
 
-  # SEC-API-02, mass assignment. Each rule below reports a write whose field list the client
-  # chooses: a serializer or model form with fields = "__all__", request data unpacked into a
-  # Django ORM call or a model constructor, a loop copying request keys onto an object, or a
-  # request body passed whole to a model write. Receivers are constrained to model-shaped names
-  # (a `.objects` manager, a capitalised class, a Prisma delegate) so a plain dict or a service
-  # call is not reported. A Sequelize write that passes a fields list is excluded, because that
-  # list is the allowlist the rule asks for.
+  # SEC-API-02, mass assignment: a write whose field list the client chooses.
   - id: SEC-API-02-python-all-fields
     languages: [python]
     severity: ERROR
@@ -156,14 +150,63 @@ rules:
           - pattern-inside: |
               class $C(..., $B, ...):
                 ...
+                class Meta:
+                  ...
           - pattern-inside: |
               class $C(..., $M.$B, ...):
                 ...
+                class Meta:
+                  ...
       - metavariable-regex:
           metavariable: $B
           regex: ^(ModelSerializer|HyperlinkedModelSerializer|ModelForm)$
       - pattern-inside: |
           class Meta:
+            ...
+      - pattern-not-inside: |
+          class $C2(..., ModelSerializer, ...):
+            ...
+            class $H:
+              ...
+              class Meta:
+                ...
+      - pattern-not-inside: |
+          class $C2(..., $MOD.ModelSerializer, ...):
+            ...
+            class $H:
+              ...
+              class Meta:
+                ...
+      - pattern-not-inside: |
+          class $C2(..., HyperlinkedModelSerializer, ...):
+            ...
+            class $H:
+              ...
+              class Meta:
+                ...
+      - pattern-not-inside: |
+          class $C2(..., $MOD.HyperlinkedModelSerializer, ...):
+            ...
+            class $H:
+              ...
+              class Meta:
+                ...
+      - pattern-not-inside: |
+          class $C2(..., ModelForm, ...):
+            ...
+            class $H:
+              ...
+              class Meta:
+                ...
+      - pattern-not-inside: |
+          class $C2(..., $MOD.ModelForm, ...):
+            ...
+            class $H:
+              ...
+              class Meta:
+                ...
+      - pattern-not-inside: |
+          def $FN(...):
             ...
       - pattern: fields = "__all__"
 
@@ -176,8 +219,10 @@ rules:
     patterns:
       - pattern-either:
           - pattern: $RECV.$METHOD(..., **request.$A, ...)
+          - pattern: $RECV.$METHOD(..., **request.$F(...), ...)
           - pattern: $RECV.$METHOD(..., **request.$A.$F(...), ...)
           - pattern: $RECV.$METHOD(..., defaults=request.$A, ...)
+          - pattern: $RECV.$METHOD(..., defaults=request.$F(...), ...)
       - metavariable-regex:
           metavariable: $METHOD
           regex: ^(create|update|get_or_create|update_or_create)$
@@ -189,15 +234,16 @@ rules:
     languages: [python]
     severity: ERROR
     message: >
-      SEC-API-02: request data is unpacked into a model constructor, so the client decides which
-      attributes are set. Pass the allowed fields by name. See security-standards.md.
+      SEC-API-02: request data is unpacked into a class constructor, so the client's keys become
+      its attributes. Pass the allowed fields by name. See security-standards.md.
     patterns:
       - pattern-either:
           - pattern: $CLS(..., **request.$A, ...)
           - pattern: $CLS(..., **request.$F(...), ...)
+          - pattern: $CLS(..., **request.$A.$F(...), ...)
       - metavariable-regex:
           metavariable: $CLS
-          regex: ^([a-z_][A-Za-z0-9_]*\.)*[A-Z][A-Za-z0-9_]*$
+          regex: ^(?![\w.]*(Response|Error|Exception|Dict|Counter|ChainMap|Namespace|Tuple)$)([a-z_][A-Za-z0-9_]*\.)*[A-Z][A-Za-z0-9_]*$
 
   - id: SEC-API-02-python-setattr-loop
     languages: [python]
@@ -221,20 +267,23 @@ rules:
     severity: ERROR
     message: >
       SEC-API-02: the whole request body goes into a model write, so the client decides which
-      fields are written. Pick the allowed fields from the body first, or pass a fields list where
-      the ORM takes one. See security-standards.md.
+      fields are written. Pick the allowed fields from the body first, or pass a fields list of
+      string literals where the ORM takes one. See security-standards.md.
     patterns:
       - pattern-either:
           - pattern: $M.$WRITE($REQ.body)
-          - pattern: $M.$WRITE($REQ.body, $OPT)
           - pattern: $M.$WRITE({..., ...$REQ.body, ...})
-      - pattern-not: '$M.$WRITE($REQ.body, {..., fields: $F, ...})'
+          - patterns:
+              - pattern: $M.$WRITE($REQ.body, $OPT)
+              - metavariable-regex:
+                  metavariable: $OPT
+                  regex: ^(?![\s\S]*\bfields\s*:\s*\[\s*(?:(?:"[^"]*"|'[^']*')\s*,?\s*)*\])[\s\S]*$
       - metavariable-regex:
           metavariable: $WRITE
           regex: ^(create|insertMany|bulkCreate|build|update)$
       - metavariable-regex:
           metavariable: $M
-          regex: ^([A-Za-z_$][A-Za-z0-9_$]*\.)*[A-Z][A-Za-z0-9_$]*$
+          regex: ^(?!(Object|Array|Promise|Reflect|JSON|Math|Map|Set|WeakMap|WeakSet|Date|Number|String|Symbol|Proxy)$)([A-Za-z_$][A-Za-z0-9_$]*\.)*[A-Z][A-Za-z0-9_$]*$
       - metavariable-regex:
           metavariable: $REQ
           regex: ^(req|request|ctx\.request)$
@@ -267,7 +316,7 @@ rules:
       - pattern: new $M($REQ.body)
       - metavariable-regex:
           metavariable: $M
-          regex: ^(?!(Error|URLSearchParams|Map|Set|Date|Blob|Response|Request|Headers|FormData|Buffer|Promise|Array|Object|String|Number)$)[A-Z][A-Za-z0-9_$]*$
+          regex: ^(?!(URLSearchParams|URL|RegExp|Function|Map|Set|WeakMap|WeakSet|Date|Blob|File|Response|Request|Headers|FormData|Buffer|Promise|Proxy|Array|Object|String|Number|Boolean|Symbol|BigInt|ArrayBuffer|SharedArrayBuffer|DataView|Uint8Array|Uint8ClampedArray|Int8Array|Uint16Array|Int16Array|Uint32Array|Int32Array|Float32Array|Float64Array|BigInt64Array|BigUint64Array|TextEncoder|TextDecoder|Event|CustomEvent|MessageEvent|Worker|WebSocket|EventSource|AbortController|ReadableStream|WritableStream|TransformStream|DOMParser|Image|Audio|Notification)$|.*Error$)[A-Z][A-Za-z0-9_$]*$
       - metavariable-regex:
           metavariable: $REQ
           regex: ^(req|request|ctx\.request)$
@@ -288,9 +337,36 @@ rules:
               $O.set($REQ.body);
               ...
               $O.save(...);
+      - pattern-not-inside: |
+          Object.assign($O, $REQ.body);
+          ...
+          $O = $X;
+          ...
+          $O.save(...);
+      - pattern-not-inside: |
+          $O.set($REQ.body);
+          ...
+          $O = $X;
+          ...
+          $O.save(...);
       - pattern-either:
           - pattern: Object.assign($O, $REQ.body)
           - pattern: $O.set($REQ.body)
+      - metavariable-regex:
+          metavariable: $REQ
+          regex: ^(req|request|ctx\.request)$
+
+  - id: SEC-API-02-js-document-assigned-and-saved-chained
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >
+      SEC-API-02: the whole request body is copied onto a document and saved in one expression, so
+      the client decides which fields change. Copy the allowed fields only. See
+      security-standards.md.
+    patterns:
+      - pattern-either:
+          - pattern: Object.assign($O, $REQ.body).save(...)
+          - pattern: $O.set($REQ.body).save(...)
       - metavariable-regex:
           metavariable: $REQ
           regex: ^(req|request|ctx\.request)$

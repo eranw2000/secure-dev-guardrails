@@ -87,17 +87,38 @@ case "$FILE_PATH" in
       && add "SEC-INJ-01" "SQL built by string formatting/concatenation"
     grep -Eqn 'open[[:space:]]*\([^)]*(request|input|argv|params)' "$FILE_PATH" \
       && add "SEC-PATH-01" "file path from untrusted input (check for traversal)"
-    # SEC-API-02: a serializer or model form whose own Meta says fields = "__all__". awk remembers
-    # the bases of the last top-level class, so a FilterSet in the same module as an explicit
-    # serializer is not reported.
-    awk '/^class[ \t]/ { bases = $0 } /^[ \t]+fields[ \t]*=[ \t]*["'\'']__all__["'\'']/ { if (bases ~ /(ModelSerializer|ModelForm)/) found = 1 } END { exit !found }' "$FILE_PATH" \
+    # SEC-API-02: fields = "__all__" in the Meta block that belongs to a serializer or model form.
+    # The awk program keeps a stack of class and def scopes by indentation, so the Meta has to be
+    # a direct child of a class whose bases name one of those base classes. A class header
+    # wrapped over several lines is read as one header. The name ModelSerializer also matches
+    # HyperlinkedModelSerializer.
+    awk '
+      function push(level, header,   k) {
+        n++; lvl[n] = level
+        if (header ~ /^[ \t]*class[ \t]+Meta[ \t]*[:(]/) k = "meta"
+        else if (header ~ /^[ \t]*class[ \t]/ && header ~ /(ModelSerializer|ModelForm)/) k = "model"
+        else k = "other"
+        kind[n] = k
+      }
+      /^[ \t]*$/ || /^[ \t]*#/ { next }
+      {
+        match($0, /^[ \t]*/); level = RLENGTH
+        if (cont) { header = header " " $0; if ($0 ~ /:[ \t]*(#.*)?$/) { cont = 0; push(clevel, header) }; next }
+        while (n > 0 && level <= lvl[n]) n--
+        if ($0 ~ /^[ \t]*(class|def|async[ \t]+def)[ \t]/) {
+          if ($0 ~ /:[ \t]*(#.*)?$/) push(level, $0); else { cont = 1; clevel = level; header = $0 }
+          next
+        }
+        if ($0 ~ /^[ \t]*fields[ \t]*=[ \t]*["'\'']__all__["'\'']/ && n >= 2 && kind[n] == "meta" && kind[n-1] == "model") found = 1
+      }
+      END { exit !found }' "$FILE_PATH" \
       && add "SEC-API-02" "serializer or model form with fields = \"__all__\" (list the fields explicitly)"
-    # SEC-API-02: request data unpacked into a Django manager call, or into a capitalised model
-    # constructor. A plain dict or a service object is not a model write, so neither is matched.
+    # SEC-API-02: request data unpacked into a Django manager call or a class constructor.
     grep -Eqn '\.objects\..*(create|update)[[:space:]]*\([^)]*(\*\*[[:space:]]*request\.|defaults[[:space:]]*=[[:space:]]*request\.)' "$FILE_PATH" \
       && add "SEC-API-02" "request data passed whole to a model manager call (bind an allowlist of fields)"
-    grep -Eqn '(^|[^A-Za-z0-9_.])([a-z_][A-Za-z0-9_]*\.)*[A-Z][A-Za-z0-9_]*[[:space:]]*\([^)]*\*\*[[:space:]]*request\.' "$FILE_PATH" \
-      && add "SEC-API-02" "request data unpacked into a model constructor (bind an allowlist of fields)"
+    grep -En '(^|[^A-Za-z0-9_.])([a-z_][A-Za-z0-9_]*\.)*[A-Z][A-Za-z0-9_]*[[:space:]]*\([^)]*\*\*[[:space:]]*request\.' "$FILE_PATH" \
+      | grep -Evq '(Response|Error|Exception|Dict|Counter|ChainMap|Namespace|Tuple)[[:space:]]*\([^)]*\*\*[[:space:]]*request\.' \
+      && add "SEC-API-02" "request data unpacked into a class constructor (bind an allowlist of fields)"
     ;;
   *.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs)
     grep -Eqn '(^|[^A-Za-z0-9_])eval[[:space:]]*\(|new Function[[:space:]]*\(|child_process|\.exec[[:space:]]*\(|execSync[[:space:]]*\(' "$FILE_PATH" \
@@ -106,19 +127,26 @@ case "$FILE_PATH" in
       && add "SEC-WEB-01" "untrusted data into innerHTML/dangerouslySetInnerHTML/document.write"
     grep -Eqn 'query[[:space:]]*\([[:space:]]*`[^`]*\$\{|query[[:space:]]*\([[:space:]]*["'\''][^"'\'']*["'\''][[:space:]]*\+|\.raw[[:space:]]*\(' "$FILE_PATH" \
       && add "SEC-INJ-01" "SQL built by template literal/concatenation"
-    # SEC-API-02: the whole request body in a single-line model write. Only shapes that are unsafe
-    # as written are matched here: a one-argument create, a filter-and-update whose second argument
-    # is the body, a Prisma data object, and a constructor. A Sequelize call with an options
-    # object, which may carry a fields allowlist, is left to the semgrep rule that reads the call.
-    grep -Eqn '[A-Z][A-Za-z0-9_$]*\.(create|insertMany|bulkCreate|build)[[:space:]]*\([[:space:]]*((req|request|ctx\.request)\.body([[:space:]]+as[[:space:]]+[A-Za-z0-9_$.<>]+)?[[:space:]]*\)|\{[[:space:]]*\.\.\.[[:space:]]*(req|request|ctx\.request)\.body([[:space:]]+as[[:space:]]+[A-Za-z0-9_$.<>]+)?([^.A-Za-z_]|$))' "$FILE_PATH" \
+    # SEC-API-02: the whole request body in a model write written on one line: a create, a
+    # two-argument create or update whose fields option is not a list of string literals, a
+    # filter-and-update whose second argument is the body, a Prisma data object, a constructor,
+    # and a body copied onto a document and saved in one expression.
+    grep -En '[A-Z][A-Za-z0-9_$]*\.(create|insertMany|bulkCreate|build)[[:space:]]*\([[:space:]]*((req|request|ctx\.request)\.body([[:space:]]+as[[:space:]]+[A-Za-z0-9_$.<>]+)?[[:space:]]*\)|\{[[:space:]]*\.\.\.[[:space:]]*(req|request|ctx\.request)\.body([[:space:]]+as[[:space:]]+[A-Za-z0-9_$.<>]+)?([^.A-Za-z_]|$))' "$FILE_PATH" \
+      | grep -Evq '(^|[^A-Za-z0-9_$.])(Object|Array|Promise|Reflect|JSON|Math|Map|Set|WeakMap|WeakSet|Date|Number|String|Symbol|Proxy)\.(create|insertMany|bulkCreate|build|update)[[:space:]]*\(' \
       && add "SEC-API-02" "request body passed whole to a model create (bind an allowlist of fields)"
+    grep -En '[A-Z][A-Za-z0-9_$]*\.(create|update|bulkCreate|build)[[:space:]]*\([[:space:]]*(req|request|ctx\.request)\.body([[:space:]]+as[[:space:]]+[A-Za-z0-9_$.<>]+)?[[:space:]]*,[[:space:]]*\{.*\}[[:space:]]*\)' "$FILE_PATH" \
+      | grep -Ev '(^|[^A-Za-z0-9_$.])(Object|Array|Promise|Reflect|JSON|Math|Map|Set|WeakMap|WeakSet|Date|Number|String|Symbol|Proxy)\.(create|insertMany|bulkCreate|build|update)[[:space:]]*\(' \
+      | grep -Evq 'fields[[:space:]]*:[[:space:]]*\[[[:space:]]*(("[^"]*"|'\''[^'\'']*'\'')[[:space:]]*,?[[:space:]]*)*\]' \
+      && add "SEC-API-02" "request body passed to a model write whose fields option is not a literal list (list the allowed fields)"
     grep -Eqn '[A-Z][A-Za-z0-9_$]*\.(findByIdAndUpdate|findOneAndUpdate|updateOne|updateMany)[[:space:]]*\(.*,[[:space:]]*(req|request|ctx\.request)\.body([[:space:]]+as[[:space:]]+[A-Za-z0-9_$.<>]+)?[[:space:]]*[,)]' "$FILE_PATH" \
       && add "SEC-API-02" "request body used as the whole update document (bind an allowlist of fields)"
     grep -Eqn '\.(create|update|createMany|updateMany|upsert)[[:space:]]*\([[:space:]]*\{.*(data|create|update)[[:space:]]*:[[:space:]]*(req|request|ctx\.request)\.body([[:space:]]+as[[:space:]]+[A-Za-z0-9_$.<>]+)?([^.A-Za-z_]|$)' "$FILE_PATH" \
       && add "SEC-API-02" "request body passed whole as Prisma write data (bind an allowlist of fields)"
     grep -En 'new[[:space:]]+[A-Z][A-Za-z0-9_$]*[[:space:]]*\([[:space:]]*(req|request|ctx\.request)\.body([[:space:]]+as[[:space:]]+[A-Za-z0-9_$.<>]+)?[[:space:]]*\)' "$FILE_PATH" \
-      | grep -Evq 'new[[:space:]]+(Error|URLSearchParams|Map|Set|Date|Blob|Response|Request|Headers|FormData|Buffer|Promise|Array|Object|String|Number)[[:space:]]*\(' \
+      | grep -Evq 'new[[:space:]]+([A-Za-z0-9_$]*Error|URLSearchParams|URL|RegExp|Function|Map|Set|WeakMap|WeakSet|Date|Blob|File|Response|Request|Headers|FormData|Buffer|Promise|Proxy|Array|Object|String|Number|Boolean|Symbol|BigInt|ArrayBuffer|SharedArrayBuffer|DataView|[A-Za-z0-9]*Array|TextEncoder|TextDecoder|Event|CustomEvent|MessageEvent|Worker|WebSocket|EventSource|AbortController|ReadableStream|WritableStream|TransformStream|DOMParser|Image|Audio|Notification)[[:space:]]*\(' \
       && add "SEC-API-02" "model constructed from the whole request body (bind an allowlist of fields)"
+    grep -Eqn '(\.set[[:space:]]*\([[:space:]]*(req|request|ctx\.request)\.body([[:space:]]+as[[:space:]]+[A-Za-z0-9_$.<>]+)?[[:space:]]*\)|Object\.assign[[:space:]]*\([^,]+,[[:space:]]*(req|request|ctx\.request)\.body([[:space:]]+as[[:space:]]+[A-Za-z0-9_$.<>]+)?[[:space:]]*\))[[:space:]]*\.save[[:space:]]*\(' "$FILE_PATH" \
+      && add "SEC-API-02" "request body copied onto a document and saved (copy the allowed fields only)"
     ;;
   *.java|*.cs)
     grep -Eqn 'ObjectInputStream|readObject[[:space:]]*\(|XMLDecoder|BinaryFormatter|Runtime\.getRuntime\(\)\.exec|ProcessBuilder\([^)]*\+' "$FILE_PATH" \

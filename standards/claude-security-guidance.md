@@ -105,11 +105,10 @@ wins, and size never lowers it: one changed line in a login check is tier 3.
   from outside the process. Follow the rules as you write, then self-check.
 - **Tier 2, outside input or personal data.** A new endpoint, a parser, a query, a file path
   or URL built from input, a log line near user data, a new dependency. Also name the rules
-  that apply in your reply, and write the SEC-TEST-01 test for each input path you changed.
-- **Tier 3, a SEC-DES-01 surface.** Authentication, sessions, authorization, cryptography,
-  infrastructure, uploads, command execution, deserialization, agents. Also ask the developer
-  whether `threat-model` has run for this change, and say the change needs a human security
-  review. Ask; do not start either one yourself.
+  that apply in your reply, and write the tests SEC-TEST-01 asks for when it applies.
+- **Tier 3, a surface listed in SEC-DES-01**, such as sign-in, roles, cryptography or file
+  upload. Also ask the developer whether `threat-model` has run for this change, and say the
+  change needs a human security review. Ask; do not start either one yourself.
 
 ## Before you say a task is done
 
@@ -118,16 +117,18 @@ then report. Do not run the check again over your own fix. When a fix is more th
 edit, report the item as open rather than reworking the change.
 
 1. Does a value from outside the process reach a query, a shell, a file path, a URL or a page
-   without the safe form in `security-standards.md`? (SEC-INJ-*, SEC-WEB-03)
-2. Does every new or changed endpoint that returns or changes private data check that this
-   caller may touch this record? (SEC-WEB-02)
+   without its safe form? (SEC-INJ-*, SEC-PATH-01, SEC-WEB-01, SEC-WEB-03)
+2. Does every new route that is not deliberately public check who is calling, and every
+   endpoint that returns or changes private data check that this caller may touch this
+   record? (SEC-AUTH-01, SEC-WEB-02)
 3. Did a secret, a token or personal data land in code, a fixture, a log line or an error
-   message? (SEC-SECRET-01, SEC-LOG-01, PRIV-LOG-01)
+   message, or an outside value reach a log other than as a field? (SEC-SECRET-01,
+   SEC-LOG-01, SEC-LOG-02, PRIV-LOG-01, PRIV-LOG-02, PRIV-ANON-01)
 4. Is every new package name confirmed on its registry? (SEC-DEP-05)
-5. Did you switch off, skip or loosen a check, a guard, certificate checking or a test to make
-   the task pass? (SEC-CRYPTO-01, SEC-AI-CMD-03)
-6. Tier 2 and 3 only: is there a test that sends the attack and fails with the guard removed?
-   (SEC-TEST-01)
+5. Did you switch off or go around a guard, a scan or certificate checking to make the task
+   pass? (SEC-CRYPTO-01; SEC-AI-CMD-03 in `ai-agent-standards.md`)
+6. When SEC-TEST-01 applies: is there a test for each case it lists that the change touches,
+   and does each fail with its guard removed? (SEC-TEST-01)
 
 Report it in one line: the tier, then only the questions that failed or that the diff could
 not answer. "Tier 1, self-check clean" is a complete report. A worked example of the tiers and

@@ -38,7 +38,8 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
 - `skills/`, new skills (`privacy-review`, `threat-model`, `dependency-review`,
   `secrets-remediation`) and `enhancements/` (drop-in specs for `code-review`,
   `security-review`, `spec-review`, `architect`).
-- `docs/`, the three-ring model and developer onboarding.
+- `docs/`, the three-ring model, developer onboarding, and a worked example that takes one
+  endpoint from unsafe to safe through the effort tiers and the self-check.
 
 ## Install (per machine / fleet)
 

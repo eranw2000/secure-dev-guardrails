@@ -26,6 +26,13 @@ What the security and privacy guardrails are, and what you need to do.
   start. A store the deletion job does not know about breaks a legal obligation silently.
 - Use synthetic data in fixtures and seeds. Never real customer data.
 
+## Before you call a task done
+
+Pick the tier the change belongs to and answer the six-question self-check in
+`standards/claude-security-guidance.md`, once, over the lines you changed. Claude Code does
+the same before it reports a task finished. `docs/worked-example.md` shows both on one
+endpoint.
+
 ## When something fires
 
 - **A hook blocked your edit.** It names the rule (SEC-* or PRIV-*) and the fix. Apply the fix.

@@ -94,6 +94,46 @@ never install a name to find out whether it exists. A name reported as young is 
 the developer, so name it in your reply rather than adding it quietly. Exit 2 means a registry
 did not answer, which is not a pass: say the name is unconfirmed.
 
+## Scale the effort to what the change can break
+
+Pick a tier once, at the start, from what the change touches. The highest tier that matches
+wins, and size never lowers it: one changed line in a login check is tier 3.
+
+- **Tier 0, nothing runs differently.** Docs, comments, formatting, test data with no real
+  values. Do the self-check below and nothing more.
+- **Tier 1, ordinary code.** Logic that handles no credentials, no personal data and no input
+  from outside the process. Follow the rules as you write, then self-check.
+- **Tier 2, outside input or personal data.** A new endpoint, a parser, a query, a file path
+  or URL built from input, a log line near user data, a new dependency. Also name the rules
+  that apply in your reply, and write the tests SEC-TEST-01 asks for when it applies.
+- **Tier 3, a surface listed in SEC-DES-01**, such as sign-in, roles, cryptography or file
+  upload. Also ask the developer whether `threat-model` has run for this change, and say the
+  change needs a human security review. Ask; do not start either one yourself.
+
+## Before you say a task is done
+
+Run this check once, after your last edit, over the lines you changed. Fix what fails and
+then report. Do not run the check again over your own fix. When a fix is more than a small
+edit, report the item as open rather than reworking the change.
+
+1. Does a value from outside the process reach a query, a shell, a file path, a URL or a page
+   without its safe form? (SEC-INJ-*, SEC-PATH-01, SEC-WEB-01, SEC-WEB-03)
+2. Does every new route that is not deliberately public check who is calling, and every
+   endpoint that returns or changes private data check that this caller may touch this
+   record? (SEC-AUTH-01, SEC-WEB-02)
+3. Did a secret, a token or personal data land in code, a fixture, a log line or an error
+   message, or an outside value reach a log other than as a field? (SEC-SECRET-01,
+   SEC-LOG-01, SEC-LOG-02, PRIV-LOG-01, PRIV-LOG-02, PRIV-ANON-01)
+4. Is every new package name confirmed on its registry? (SEC-DEP-05)
+5. Did you switch off or go around a guard, a scan or certificate checking to make the task
+   pass? (SEC-CRYPTO-01; SEC-AI-CMD-03 in `ai-agent-standards.md`)
+6. When SEC-TEST-01 applies: is there a test for each case it lists that the change touches,
+   and does each fail with its guard removed? (SEC-TEST-01)
+
+Report it in one line: the tier, then only the questions that failed or that the diff could
+not answer. "Tier 1, self-check clean" is a complete report. A worked example of the tiers and
+the check, on one real endpoint, is in `docs/worked-example.md`.
+
 ## What not to do
 
 Do not claim a clean review "ensures" the code is secure. State what you checked and what you

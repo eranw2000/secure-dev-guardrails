@@ -1,0 +1,134 @@
+{
+  "_comment": "Canned registry answers for test_sec_dep_05_detections.py. A name absent here is a 404. __error__ means the registry could not answer. The test replaces each placeholder date with the real date five days before the run, so brand-new-lib is always five days old. A PyPI answer needs info and releases objects and an npm answer must name the package it was asked about; the malformed entries at the end exist to prove the check refuses anything else.",
+  "pypi": {
+    "requests": {
+      "releases": {
+        "0.2.0": [
+          {
+            "upload_time_iso_8601": "2011-02-14T08:49:42Z"
+          }
+        ],
+        "2.32.0": [
+          {
+            "upload_time_iso_8601": "2024-05-20T00:00:00Z"
+          }
+        ]
+      },
+      "info": {
+        "name": "requests"
+      }
+    },
+    "python-dateutil": {
+      "releases": {
+        "1.4": [
+          {
+            "upload_time_iso_8601": "2003-11-24T00:00:00Z"
+          }
+        ]
+      },
+      "info": {
+        "name": "python-dateutil"
+      }
+    },
+    "brand-new-lib": {
+      "releases": {
+        "0.0.1": [
+          {
+            "upload_time_iso_8601": "__FIVE_DAYS_AGO__"
+          }
+        ]
+      },
+      "info": {
+        "name": "brand-new-lib"
+      }
+    },
+    "empty-shell": {
+      "info": {
+        "name": "empty-shell"
+      },
+      "releases": {}
+    },
+    "old-lib-new-release": {
+      "releases": {
+        "0.1": [
+          {
+            "upload_time_iso_8601": "2012-06-01T00:00:00Z"
+          }
+        ],
+        "9.0": [
+          {
+            "upload_time_iso_8601": "__FIVE_DAYS_AGO__"
+          }
+        ]
+      },
+      "info": {
+        "name": "old-lib-new-release"
+      }
+    },
+    "flaky-lookup": "__error__",
+    "naive-time": {
+      "info": {
+        "name": "naive-time"
+      },
+      "releases": {
+        "1.0": [
+          {
+            "upload_time_iso_8601": "2012-01-01T00:00:00"
+          }
+        ]
+      }
+    },
+    "no-info": {
+      "releases": {}
+    },
+    "releases-text": {
+      "info": {
+        "name": "releases-text"
+      },
+      "releases": "none"
+    },
+    "top-list": [],
+    "other-package": {
+      "info": {
+        "name": "requests"
+      },
+      "releases": {
+        "1.0": [
+          {
+            "upload_time_iso_8601": "2011-01-01T00:00:00Z"
+          }
+        ]
+      }
+    }
+  },
+  "npm": {
+    "left-pad": {
+      "time": {
+        "created": "2014-03-14T09:09:20.762Z"
+      },
+      "name": "left-pad"
+    },
+    "@types/node": {
+      "time": {
+        "created": "2016-05-17T00:00:00Z"
+      },
+      "name": "@types/node"
+    },
+    "is-number": {
+      "name": "is-number",
+      "time": {
+        "created": "2014-09-22T00:00:00Z"
+      }
+    },
+    "wrong-name": {
+      "name": "something-else",
+      "time": {
+        "created": "2014-09-22T00:00:00Z"
+      }
+    },
+    "time-text": {
+      "name": "time-text",
+      "time": "yesterday"
+    }
+  }
+}

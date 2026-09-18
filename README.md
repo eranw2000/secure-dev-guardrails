@@ -19,7 +19,7 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
   (PRIV-*, GDPR + CCPA), AI and agent rules (SEC-AI-*)
   for systems where a model reads outside content, the severity taxonomy, the suppression
   baseline, and the two org policy files that the skills here (and any external review plugin
-  you point at them) read. Everything else cites these IDs. `framework-mapping.md` ties all 70
+  you point at them) read. Everything else cites these IDs. `framework-mapping.md` ties all 71
   rules to NIST SSDF, the OWASP Top 10 2025, CWE, the OWASP LLM Top 10 2025, and GDPR/CCPA, so
   a rule can be defended in an audit rather than only asserted.
 - `hooks/`, Claude Code hooks. `secret-scan.sh` and `pii-in-logs.sh` hard-block;
@@ -30,7 +30,9 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
 - `ci/`, `security-privacy.yml` reusable GitHub Actions workflow, `.pre-commit-config.yaml`,
   the org `semgrep/` rule packs, `check-workflow-hardening.sh`, which reads the repo's own
   workflow files, and `check-kev.py`, which checks advisory ids against CISA's Known Exploited
-  Vulnerabilities catalogue. This is the gate that actually blocks merges.
+  Vulnerabilities catalogue. This is the gate that actually blocks merges. It also holds
+  `check-package-exists.py`, which the assistant and `dependency-review` run to confirm a
+  package name on PyPI or npm.
 - `skills/`, new skills (`privacy-review`, `threat-model`, `dependency-review`,
   `secrets-remediation`) and `enhancements/` (drop-in specs for `code-review`,
   `security-review`, `spec-review`, `architect`).
@@ -63,6 +65,14 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
   how bad a flaw could be while a listing says somebody is exploiting it now, with a remediation
   date CISA sets. The script exits 2, never 0, when it cannot read the catalogue: a KEV check
   that reports clean because the network was down converts a look into a tick.
+- Package names (SEC-DEP-05): a coding assistant can write a name for a package that was
+  never published, and attackers register exactly those names. `ci/check-package-exists.py`
+  asks PyPI and npm directly, by name, from a manifest or the command line, following `-r`
+  and `-c` includes on disk. The org guidance file tells the assistant to run it before writing a new
+  name, and `dependency-review` step 1b runs it over every added name. A missing name fails; a
+  name first published in the last 90 days, or installed from a registry the project
+  configures, is listed for a person to confirm; a registry that does not give a usable answer
+  exits 2, never 0.
 - Pipeline (CI + pre-commit): actions pinned to a commit SHA and a narrowed build token
   (SEC-CI-01/02). This one reports by default rather than blocking, and the reason is measured
   rather than polite: of the three repositories with workflow files on the machine this pack was

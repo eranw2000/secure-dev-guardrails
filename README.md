@@ -58,10 +58,11 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
 - Warn / review (hook + skills): injection, weak crypto, disabled TLS, dangerous patterns, and
   the privacy judgment calls (retention, deletion reachability, consent, transfers, subject
   rights).
-- Outgoing requests, uploads and database accounts (hook + semgrep + review): a request value
-  that becomes the URL of an outgoing request (SEC-WEB-03), an archive unpacked with no path
-  filter (SEC-UPLOAD-01), and a database login as the superuser or owner (SEC-DB-01) are
-  reported as they are written. The rest of each rule (address checks, pinning and redirects;
+- Outgoing requests, uploads and database accounts (owned at review, with patterns that
+  assist): semgrep and the hook report a request value that becomes the URL of an outgoing
+  request (SEC-WEB-03) and an archive unpacked without a recognised path filter
+  (SEC-UPLOAD-01); the hook reports a database login as the superuser or owner (SEC-DB-01).
+  Each rule's owner entry in `standards/security-standards.md` lists the shapes covered. The rest of each rule (address checks, pinning and redirects;
   content checks, size caps and where uploads are served from; migration and read-only
   accounts), and SEC-LOG-02 on forged log lines and security-event fields, are settled at
   review.

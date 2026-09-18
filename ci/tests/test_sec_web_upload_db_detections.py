@@ -57,6 +57,14 @@ HOOK_EXPECT = {
     "sec_db_01_hook_host_named_postgres_control.py": ("SEC-DB-01", False),
     "sec_db_01_hook_prefixed_login_control.py": ("SEC-DB-01", False),
     "sec_db_01_hook_django_env_control.py": ("SEC-DB-01", False),
+    # A Unix-user check, a plain variable and an unrelated settings dict name no database;
+    # a DB_ variable, an admin login in a driver call and in DATABASES do.
+    "sec_db_01_hook_unix_user_control.py": ("SEC-DB-01", False),
+    "sec_db_01_hook_plain_user_control.py": ("SEC-DB-01", False),
+    "sec_db_01_hook_config_dict_control.py": ("SEC-DB-01", False),
+    "sec_db_01_hook_db_user_var.py": ("SEC-DB-01", True),
+    "sec_db_01_hook_driver_admin.py": ("SEC-DB-01", True),
+    "sec_db_01_hook_django_admin.py": ("SEC-DB-01", True),
     "sec_web_03_hook_requests.py": ("SEC-WEB-03", True),
     "sec_web_03_hook_keyword.py": ("SEC-WEB-03", True),
     "sec_web_03_hook_verb.py": ("SEC-WEB-03", True),
@@ -69,6 +77,12 @@ HOOK_EXPECT = {
     "sec_web_03_hook_validated_control.py": ("SEC-WEB-03", False),
     "sec_web_03_hook_params_control.py": ("SEC-WEB-03", False),
     "sec_web_03_hook_prefetch_control.js": ("SEC-WEB-03", False),
+    "sec_web_03_hook_session_inline.py": ("SEC-WEB-03", True),
+    "sec_web_03_hook_session_var.py": ("SEC-WEB-03", True),
+    "sec_web_03_hook_aiohttp.py": ("SEC-WEB-03", True),
+    "sec_web_03_hook_url_kw_verb.py": ("SEC-WEB-03", True),
+    "sec_web_03_hook_urljoin.py": ("SEC-WEB-03", True),
+    "sec_web_03_hook_cache_control.py": ("SEC-WEB-03", False),
     "sec_upload_01_hook_tar.py": ("SEC-UPLOAD-01", True),
     "sec_upload_01_hook_unpack.py": ("SEC-UPLOAD-01", True),
     "sec_upload_01_hook_fully_trusted.py": ("SEC-UPLOAD-01", True),
@@ -76,6 +90,9 @@ HOOK_EXPECT = {
     "sec_upload_01_hook_filtered_control.py": ("SEC-UPLOAD-01", False),
     "sec_upload_01_hook_zip_only_control.py": ("SEC-UPLOAD-01", False),
     "sec_upload_01_hook_other_extract_control.py": ("SEC-UPLOAD-01", False),
+    # The call is read to its closing parenthesis, so a filter on a later line counts.
+    "sec_upload_01_hook_multiline_filtered_control.py": ("SEC-UPLOAD-01", False),
+    "sec_upload_01_hook_multiline_unfiltered.py": ("SEC-UPLOAD-01", True),
 }
 
 failures: list[str] = []

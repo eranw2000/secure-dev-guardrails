@@ -63,10 +63,16 @@ grep -Eqn '(subprocess|os\.system|execSync|Runtime\.getRuntime|ProcessBuilder).*
   && add "SEC-SECRET-03" "credential passed on a command line (use a file or an env var)"
 
 # --- SEC-DB-01: the application logs in to its database as the superuser or owner. Only the
-# shapes that name the login in the file: a connection URL, a key=value connection string, a
-# driver keyword argument, and Django's DATABASES entry. A host NAMED postgres is common in
-# container setups and is not a login, so the login has to sit right after the scheme.
-grep -Eiqn '(postgres(ql)?|mysql|mariadb|mssql|sqlserver|mongodb(\+srv)?)(\+[a-z0-9]+)?://(postgres|root|sa|admin)(:|@)|(user[[:space:]]*id|userid|uid|username|user)[[:space:]]*=[[:space:]]*["'\'']?(sa|root|postgres)["'\'']?[[:space:]]*(;|,|\)|"|$)|["'\'']USER["'\''][[:space:]]*:[[:space:]]*["'\''](postgres|root|sa)["'\'']' "$FILE_PATH" \
+# shapes that name the login in the file: a connection URL, a key=value or keyword login on a
+# line that also names a database, and Django's DATABASES entry in a file that has DATABASES.
+# A host NAMED postgres is common in container setups and is not a login, so in a URL the login
+# has to sit right after the scheme. A plain `user = "root"` names no database and stays quiet.
+DB_LOGIN='(sa|root|postgres|admin)'
+{ grep -Eiq "(postgres(ql)?|mysql|mariadb|mssql|sqlserver|mongodb(\+srv)?)(\+[a-z0-9]+)?://${DB_LOGIN}(:|@)" "$FILE_PATH" \
+  || grep -Ei "(user[[:space:]]*id|userid|uid|username|user)[[:space:]]*=[[:space:]]*[\"']?${DB_LOGIN}[\"']?[[:space:]]*(;|,|\)|\"|$)" "$FILE_PATH" \
+       | grep -Eiq 'connect|database|db_|server=|host=|data source|psycopg|pymysql|mysql|mariadb|postgres|sqlalchemy|sequelize|knex|mongo|mssql|sqlserver|pool' \
+  || { grep -q 'DATABASES' "$FILE_PATH" \
+       && grep -Eiq "[\"']USER[\"'][[:space:]]*:[[:space:]]*[\"']${DB_LOGIN}[\"']" "$FILE_PATH"; }; } \
   && add "SEC-DB-01" "database login as the superuser or owner (use an account with only what the service needs)"
 
 # --- SEC-PATH-02: predictable temp file, or a world-writable mode ---
@@ -97,16 +103,35 @@ case "$FILE_PATH" in
     # SEC-WEB-03: a request value written straight into an outgoing request on one line. A value
     # passed through a helper first starts the argument with the helper's name and stays quiet;
     # flows through a variable are semgrep's.
-    grep -Eqn '(requests|httpx)\.(get|post|put|patch|delete|head|options|request)[[:space:]]*\([[:space:]]*(["'\''][A-Z]+["'\''][[:space:]]*,[[:space:]]*)?(url[[:space:]]*=[[:space:]]*)?request\.(args|form|values|json|get_json|GET|POST|data|query_params)|urlopen[[:space:]]*\([[:space:]]*request\.(args|form|values|json|get_json|GET|POST|data|query_params)' "$FILE_PATH" \
+    WEB_RECV='(requests|httpx|aiohttp|requests\.Session\(\)|httpx\.(Async)?Client\(\)|[A-Za-z_]*(session|client|Session|Client))'
+    WEB_PRE="([\"'][A-Z]+[\"'][[:space:]]*,[[:space:]]*|method[[:space:]]*=[[:space:]]*[\"'][A-Z]+[\"'][[:space:]]*,[[:space:]]*)?(url[[:space:]]*=[[:space:]]*)?(urljoin[[:space:]]*\([^)]*,[[:space:]]*)?"
+    WEB_SRC='request\.(args|form|values|json|get_json|GET|POST|data|query_params)'
+    grep -Eqn "${WEB_RECV}\.(get|post|put|patch|delete|head|options|request|stream)[[:space:]]*\([[:space:]]*${WEB_PRE}${WEB_SRC}|urlopen[[:space:]]*\([[:space:]]*${WEB_SRC}" "$FILE_PATH" \
       && add "SEC-WEB-03" "a request value used as the URL of an outgoing request (check scheme, host and address first)"
     # SEC-UPLOAD-01: tar extraction with no path filter. The hook reads one line at a time, so it
     # looks only in a file that uses tarfile or unpack_archive; there, a zipfile extraction beside
     # tarfile is reported here and semgrep, which parses, stays quiet.
     if grep -Eq 'tarfile|unpack_archive' "$FILE_PATH"; then
-      grep -En '\.(extractall|extract)[[:space:]]*\(|unpack_archive[[:space:]]*\(' "$FILE_PATH" \
-        | grep -Ev 'filter[[:space:]]*=' | grep -q . \
+      # Read each extraction call to its closing parenthesis (at most 8 lines), so a filter on
+      # a later line of the same call counts.
+      UNPACK=$(awk '
+        function n(str, ch,   c, k) { c = 0; for (k = 1; k <= length(str); k++) if (substr(str, k, 1) == ch) c++; return c }
+        function done() {
+          if (buf ~ /filter[ \t]*=[ \t]*["'\'']fully_trusted/) print "trusted"
+          else if (buf !~ /filter[ \t]*=/) print "nofilter"
+          open = 0
+        }
+        {
+          if (open) { buf = buf " " $0; lines++; if (n(buf, "(") <= n(buf, ")") || lines >= 8) done(); next }
+          if (match($0, /(\.extractall|\.extract|unpack_archive)[ \t]*\(/)) {
+            buf = substr($0, RSTART); lines = 1; open = 1
+            if (n(buf, "(") <= n(buf, ")")) done()
+          }
+        }
+        END { if (open) done() }' "$FILE_PATH")
+      echo "$UNPACK" | grep -q nofilter \
         && add "SEC-UPLOAD-01" "archive unpacked with no path filter (pass filter=\"data\")"
-      grep -Eqn '(extractall|extract|unpack_archive)[[:space:]]*\(.*filter[[:space:]]*=[[:space:]]*["'\'']fully_trusted' "$FILE_PATH" \
+      echo "$UNPACK" | grep -q trusted \
         && add "SEC-UPLOAD-01" "archive unpacked with filter=\"fully_trusted\", which is no filter"
     fi
     # SEC-API-02: fields = "__all__" in the Meta block that belongs to a serializer or model form.

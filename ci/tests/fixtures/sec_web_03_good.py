@@ -26,3 +26,11 @@ def as_query_parameter():
 
 def as_header():
     return requests.get("https://api.example.com/x", headers={"X-Trace": request.args["t"]})
+
+
+def guarded_by_host_check():
+    return requests.get(ensure_public_host(request.args["u"]), timeout=5)
+
+
+def cache_lookup():
+    return cache.get(request.args["key"])

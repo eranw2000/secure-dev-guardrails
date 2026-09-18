@@ -28,3 +28,18 @@ def trusted_by_name(path, dest):
 
 def generic_trusted(path, dest):
     shutil.unpack_archive(path, dest, filter="fully_trusted")  # EXPECT SEC-UPLOAD-01
+
+
+def class_open(path, dest):
+    with tarfile.TarFile.open(path) as tf:
+        tf.extractall(dest)  # EXPECT SEC-UPLOAD-01
+
+
+def filter_in_a_variable(path, dest):
+    chosen = "fully_trusted"
+    shutil.unpack_archive(path, dest, filter=chosen)  # EXPECT SEC-UPLOAD-01
+
+
+def unknown_filter(path, dest):
+    with tarfile.open(path) as tf:
+        tf.extractall(dest, filter=my_filter)  # EXPECT SEC-UPLOAD-01

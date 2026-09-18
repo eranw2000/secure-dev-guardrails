@@ -20,3 +20,12 @@ def zip_archive(path, dest):
 
 def generic_filtered(path, dest):
     shutil.unpack_archive(path, dest, filter="data")
+
+
+def zip_by_format(path, dest):
+    shutil.unpack_archive(path, dest, format="zip")
+
+
+def tar_filter(path, dest):
+    with tarfile.open(path) as tf:
+        tf.extractall(dest, filter="tar")

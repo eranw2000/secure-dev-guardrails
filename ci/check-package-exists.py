@@ -13,7 +13,7 @@ over a manifest a change touched.
 
 Usage
   check-package-exists.py pypi:requests npm:left-pad npm:@types/node
-  check-package-exists.py --requirements requirements.txt   # follows -r and -c
+  check-package-exists.py --requirements requirements.txt   # follows -r and -c on disk
   check-package-exists.py --package-json package.json       # reads the .npmrc beside it
   check-package-exists.py --young-days 90 pypi:some-new-lib   # age below which to ask
   check-package-exists.py --offline registry.json pypi:x      # canned answers, for tests
@@ -38,9 +38,11 @@ Design choices worth keeping:
     near-miss of a well-known package is also a question for a person, which the
     dependency-review skill asks at its step 6.
   - The public registry is the right place to ask only when it is where the install will
-    look. A requirements file that names another index, or an .npmrc that maps a scope or
-    replaces the default registry, sends those names to a person to confirm against that
-    registry instead.
+    look. An index named anywhere in a requirements file's include tree, or an .npmrc that
+    maps a scope or replaces the default registry, sends those names to a person to confirm
+    against that registry instead. An include at a URL exits 2 and names the file to fetch.
+  - A registry address is printed without its login or query, because index URLs often
+    carry credentials and this output lands in CI logs.
   - A dependency from outside any registry (a git URL, a local path, a tarball) is listed by
     name for SEC-DEP-02, which owns where a package comes from.
 """
@@ -73,6 +75,30 @@ REQ_INCLUDE = re.compile(r"^(-r|--requirement|-c|--constraint)(?:\s+|=)\s*(\S+)$
 REQ_INDEX = re.compile(r"^(-i|--index-url|--extra-index-url|-f|--find-links)(?:\s+|=)\s*(\S+)$")
 REQ_DIRECT_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\s*(?:\[[^\]]*\])?\s*@")
 REQ_NAME = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)")
+
+
+def redact(url: str) -> str:
+    """A registry address fit for a log: scheme, host, port and path, never a login or query.
+
+    Index and registry URLs often carry a user and password or a token, and this script's
+    output lands in CI logs.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return "<an address that could not be parsed>"
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    return urllib.parse.urlunsplit((parts.scheme, host, parts.path, "", ""))
+
+
+def is_public_pypi(url: str) -> bool:
+    return redact(url).rstrip("/") in PUBLIC_PYPI_INDEXES
+
+
+def is_public_npm(url: str) -> bool:
+    return redact(url).rstrip("/") in PUBLIC_NPM_REGISTRIES
 
 
 class CannotAsk(Exception):
@@ -119,6 +145,9 @@ def require_shape(eco: str, name: str, meta) -> None:
     if eco == "pypi":
         if not isinstance(meta.get("info"), dict) or not isinstance(meta.get("releases"), dict):
             raise CannotAsk(f"the PyPI answer for {name} has no info and releases objects")
+        answered = str(meta["info"].get("name") or "")
+        if pypi_normalise(answered) != pypi_normalise(name):
+            raise CannotAsk(f"the PyPI answer for {name} names {answered!r}")
     else:
         if meta.get("name") != name:
             raise CannotAsk(f"the npm answer for {name} names {meta.get('name')!r}")
@@ -201,8 +230,8 @@ def _logical_lines(text: str) -> list[str]:
     return out
 
 
-def read_requirements(path: str, into: Manifests, seen: set[str] | None = None) -> None:
-    seen = set() if seen is None else seen
+def _walk_requirements(path: str, seen: set[str], entries: list[str],
+                       indexes: list[str], into: Manifests) -> None:
     real = os.path.realpath(path)
     if real in seen:
         return
@@ -210,34 +239,43 @@ def read_requirements(path: str, into: Manifests, seen: set[str] | None = None) 
     with open(path, encoding="utf-8") as fh:
         lines = _logical_lines(fh.read())
     here = os.path.dirname(path)
-
-    # pip options apply to the whole file, wherever they sit in it.
-    index = None
-    for raw in lines:
-        m = REQ_INDEX.match(raw.split(" #", 1)[0].strip())
-        if not m:
-            continue
-        url = m.group(2).rstrip("/")
-        if m.group(1) in ("-i", "--index-url") and url in PUBLIC_PYPI_INDEXES:
-            continue
-        index = index or url
-
     for raw in lines:
         line = raw.split(" #", 1)[0].strip()
         if not line or line.startswith("#"):
+            continue
+        idx = REQ_INDEX.match(line)
+        if idx:
+            url = idx.group(2)
+            if idx.group(1) in ("-f", "--find-links") or not is_public_pypi(url):
+                indexes.append(url)
             continue
         inc = REQ_INCLUDE.match(line)
         if inc:
             target = inc.group(2)
             if "://" in target:
-                into.elsewhere.append(line)
-            else:
-                read_requirements(os.path.join(here, target), into, seen)
+                # pip fetches a URL include; this script asks the caller to, and exits 2 meanwhile.
+                raise ValueError(f"{path} includes {redact(target)}; fetch that file and "
+                                 "pass it with --requirements")
+            _walk_requirements(os.path.join(here, target), seen, entries, indexes, into)
             continue
         if line.startswith("-"):
             if line.startswith(("-e", "--editable")):
                 into.elsewhere.append(line)
-            continue  # index options were read above; the rest are not package names
+            continue  # other options are not package names
+        entries.append(line)
+
+
+def read_requirements(path: str, into: Manifests) -> None:
+    """Read a requirements file and every file it includes, then sort the names.
+
+    pip applies index options to the whole resolution, wherever in the include tree they
+    sit, so one private index anywhere in the tree covers every name in it.
+    """
+    entries: list[str] = []
+    indexes: list[str] = []
+    _walk_requirements(path, set(), entries, indexes, into)
+    index = redact(indexes[0]) if indexes else None
+    for line in entries:
         if "://" in line or line.startswith((".", "/")) or REQ_DIRECT_REF.match(line):
             into.elsewhere.append(line)
             continue
@@ -262,21 +300,32 @@ def _npmrc_registries(package_json: str) -> tuple[str | None, dict[str, str]]:
             key, value = key.strip(), value.strip().rstrip("/")
             if not sep or key.startswith((";", "#")):
                 continue
-            if key == "registry" and value not in PUBLIC_NPM_REGISTRIES:
-                default = value
-            elif key.startswith("@") and key.endswith(":registry") \
-                    and value not in PUBLIC_NPM_REGISTRIES:
-                scopes[key[: -len(":registry")]] = value
+            # npm reads the file top to bottom and the last assignment of a key wins, so a
+            # later line pointing back at the public registry clears an earlier private one.
+            private = None if is_public_npm(value) else redact(value)
+            if key == "registry":
+                default = private
+            elif key.startswith("@") and key.endswith(":registry"):
+                scope = key[: -len(":registry")]
+                if private:
+                    scopes[scope] = private
+                else:
+                    scopes.pop(scope, None)
     return default, scopes
 
 
 def read_package_json(path: str, into: Manifests) -> None:
     with open(path, encoding="utf-8") as fh:
         doc = json.load(fh)
+    if not isinstance(doc, dict):
+        raise ValueError(f"{path} is not a JSON object")
     default, scopes = _npmrc_registries(path)
     for section in ("dependencies", "devDependencies", "optionalDependencies",
                     "peerDependencies"):
-        for name, spec in (doc.get(section) or {}).items():
+        deps = doc.get(section) or {}
+        if not isinstance(deps, dict):
+            raise ValueError(f"{path}: {section} is not an object")
+        for name, spec in deps.items():
             spec = str(spec)
             if spec.startswith("npm:"):
                 # An alias: the real package is the part after npm:, before the version.

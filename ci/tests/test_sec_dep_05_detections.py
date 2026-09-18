@@ -192,6 +192,7 @@ def main() -> int:
         ("a PyPI answer whose top level is a list", "pypi:top-list"),
         ("a PyPI answer whose releases is text", "pypi:releases-text"),
         ("an npm answer for a different package", "npm:wrong-name"),
+        ("a PyPI answer for a different package", "pypi:other-package"),
         ("an npm answer whose time is text", "npm:time-text"),
     ]:
         case(f"shape: {label} exits 2, not 0 and not a traceback", [target], 2,
@@ -280,6 +281,28 @@ def main() -> int:
                       "--extra-index-url https://mirror.example.invalid/simple\nrequests\n")
         case("requirements: an extra index sends its names to a person too",
              ["--requirements", extra], 0, ["mirror.example.invalid"], ["1 established"])
+        write(tmp, "child.txt", "acme-secret\n")
+        inherit = write(tmp, "inherit.txt",
+                        "--index-url https://corp.example.invalid/simple\n-r child.txt\n")
+        case("requirements: a private index set before -r covers the included file too",
+             ["--requirements", inherit], 0, ["acme-secret", "corp.example.invalid"],
+             ["pypi:acme-secret"])
+        write(tmp, "child_index.txt", "--extra-index-url https://corp.example.invalid/simple\n")
+        upward = write(tmp, "upward.txt", "-r child_index.txt\nrequests\n")
+        case("requirements: a private index set inside an included file covers the parent",
+             ["--requirements", upward], 0, ["requests  (index"], ["1 established"])
+        remote = write(tmp, "remote.txt", "-r https://example.invalid/requirements.txt\n")
+        case("requirements: an include at a URL cannot be read here, so the run exits 2",
+             ["--requirements", remote], 2, ["cannot read a manifest", "example.invalid"])
+        secret = write(tmp, "secret.txt",
+                       "--extra-index-url https://alice:s3cr3t@repo.example.invalid/simple?token=abc\n"
+                       "acme-private\n")
+        case("requirements: a login inside an index URL is never printed",
+             ["--requirements", secret], 0, ["acme-private", "repo.example.invalid"],
+             ["s3cr3t", "alice", "token=abc"])
+        pub_extra = write(tmp, "pub_extra.txt", "--extra-index-url=https://pypi.org/simple/\nrequests\n")
+        case("requirements: the public index named as an extra index is still public",
+             ["--requirements", pub_extra], 0, ["1 established"], ["INSTALLED FROM"])
         public = write(tmp, "public.txt", "-i https://pypi.org/simple\nrequests\n")
         case("requirements: naming the public index still checks against it",
              ["--requirements", public], 0, ["1 established"])
@@ -306,6 +329,25 @@ def main() -> int:
         case("package.json: a replaced default registry sends every name to a person",
              ["--package-json", corp], 0, ["npm.corp.invalid", "left-pad"], ["1 established"])
 
+        back_dir = tmp / "back"
+        back_dir.mkdir()
+        write(back_dir, ".npmrc", "registry=https://npm.corp.invalid/\n"
+              "registry=https://registry.npmjs.org/\n"
+              "@acme:registry=https://npm.corp.invalid/\n"
+              "@acme:registry=https://registry.npmjs.org/\n")
+        back = write(back_dir, "package.json", '{"dependencies": {"@acme/tool": "1.0.0"}}')
+        case("package.json: a later .npmrc line restoring the public registry wins",
+             ["--package-json", back], 1, ["npm:@acme/tool"], ["INSTALLED FROM"])
+        npm_secret_dir = tmp / "npm_secret"
+        npm_secret_dir.mkdir()
+        write(npm_secret_dir, ".npmrc", "registry=https://bob:hunter2@npm.corp.invalid/\n")
+        npm_secret = write(npm_secret_dir, "package.json", '{"dependencies": {"left-pad": "1"}}')
+        case("package.json: a login inside a registry URL is never printed",
+             ["--package-json", npm_secret], 0, ["npm.corp.invalid"], ["hunter2", "bob:"])
+        for label, body in [("a list", "[]"), ("a string section", '{"dependencies": "x"}')]:
+            shaped = write(tmp, "shaped.json", body)
+            case(f"package.json: valid JSON that is {label} exits 2, not a traceback",
+                 ["--package-json", shaped], 2, ["cannot read a manifest"], ["Traceback"])
         broken = write(tmp, "broken.json", "{not json")
         case("package.json: an unreadable manifest exits 2", ["--package-json", broken], 2,
              ["cannot read a manifest"])
@@ -322,7 +364,7 @@ def main() -> int:
             bad += 1
             print("        " + detail.replace("\n", "\n        "))
     print(f"--- SEC-DEP-05: {len(results) - bad}/{len(results)} ---")
-    if len(results) < 56:
+    if len(results) < 66:
         print("FAIL: fewer cases ran than are written here; the runner is broken")
         return 1
     return 1 if bad else 0

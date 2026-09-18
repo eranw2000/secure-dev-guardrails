@@ -68,7 +68,7 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
 - Package names (SEC-DEP-05): a coding assistant can write a name for a package that was
   never published, and attackers register exactly those names. `ci/check-package-exists.py`
   asks PyPI and npm directly, by name, from a manifest or the command line, following `-r`
-  and `-c` includes. The org guidance file tells the assistant to run it before writing a new
+  and `-c` includes on disk. The org guidance file tells the assistant to run it before writing a new
   name, and `dependency-review` step 1b runs it over every added name. A missing name fails; a
   name first published in the last 90 days, or installed from a registry the project
   configures, is listed for a person to confirm; a registry that does not give a usable answer

@@ -40,7 +40,9 @@ before an attacker registers it. A name listed as young, or listed as installed 
 configured registry, goes to step 6 as a Question; confirm the second kind on that registry.
 Step 6 also asks whether any added name is one edit away from a well-known package; that one
 is a reviewer's judgment. Exit 2 means a registry did not answer: record the name
-as unconfirmed in the report's Limits section rather than as clean.
+as unconfirmed in the report's Limits section rather than as clean. Exit 2 also covers a
+registry reply that is not a document about that name, and a manifest the script could not
+read. For an `-r` or `-c` include at a URL, fetch that file and run the script on it.
 
 ### 2. Known vulnerabilities (SEC-DEP-01)
 Run the SCA tool for each ecosystem present. For each finding, record the advisory ID
@@ -101,7 +103,9 @@ Questions that ask for a human look.
 
 ## Package names (SEC-DEP-05)
 <"all on the registry", or each name not found, each young name with its first-published
-date, and any name left unconfirmed because a registry did not answer>
+date, each name installed from a configured registry and whether you confirmed it there, and
+any name left unconfirmed because the run exited 2 (a registry gave no usable answer, or a
+manifest or an include at a URL could not be read)>
 
 ## Known exploited (SEC-DEP-04)
 <CVE, or "none listed", or "not checked: the catalogue was unreachable">

@@ -14,7 +14,9 @@
           }
         ]
       },
-      "info": {}
+      "info": {
+        "name": "requests"
+      }
     },
     "python-dateutil": {
       "releases": {
@@ -24,7 +26,9 @@
           }
         ]
       },
-      "info": {}
+      "info": {
+        "name": "python-dateutil"
+      }
     },
     "brand-new-lib": {
       "releases": {
@@ -34,10 +38,14 @@
           }
         ]
       },
-      "info": {}
+      "info": {
+        "name": "brand-new-lib"
+      }
     },
     "empty-shell": {
-      "info": {},
+      "info": {
+        "name": "empty-shell"
+      },
       "releases": {}
     },
     "old-lib-new-release": {
@@ -53,11 +61,15 @@
           }
         ]
       },
-      "info": {}
+      "info": {
+        "name": "old-lib-new-release"
+      }
     },
     "flaky-lookup": "__error__",
     "naive-time": {
-      "info": {},
+      "info": {
+        "name": "naive-time"
+      },
       "releases": {
         "1.0": [
           {
@@ -70,10 +82,24 @@
       "releases": {}
     },
     "releases-text": {
-      "info": {},
+      "info": {
+        "name": "releases-text"
+      },
       "releases": "none"
     },
-    "top-list": []
+    "top-list": [],
+    "other-package": {
+      "info": {
+        "name": "requests"
+      },
+      "releases": {
+        "1.0": [
+          {
+            "upload_time_iso_8601": "2011-01-01T00:00:00Z"
+          }
+        ]
+      }
+    }
   },
   "npm": {
     "left-pad": {

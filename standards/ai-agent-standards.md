@@ -73,20 +73,27 @@ do on its own. They apply to a product that lets a model act, and to a coding as
 in your repository, which is the same thing pointed at your own systems.
 
 - **SEC-AI-AGT-01 (Blocker):** Keep the permission to recommend apart from the authority to act.
-  A design marks each tool a model can call as one or the other, by what the call does rather
-  than by its name. A call is an ACT when it does any of these:
-  - changes stored state, including writing a file, saving a draft, or updating a record
+  Classify each CALL, not each tool: the operation, its arguments and its target together. One
+  shell, database or browser tool makes both kinds of call, so a label on the tool either grants
+  too much or blocks ordinary reads. A call is an ACT when it has any effect beyond text the
+  model returns. That includes a call that:
+  - changes stored state, such as writing a file, saving a draft or updating a record
+  - changes live state, such as stopping or restarting a process or service, disconnecting a
+    user, or operating a device, even when the change can be reversed
   - sends anything outside the system, including a search query to an outside provider
   - reads confidential data, such as a production database, a private mailbox or personal data
   - spends money or a paid quota
-  - cannot be undone
 
-  What remains is a RECOMMENDATION: reading data that is not confidential, and producing text
-  that a person reads before anything happens. No ACT is granted by default.
-- **SEC-AI-AGT-02 (Blocker):** Every ACT passes a fixed check in code before it runs: an
-  allowlist of operations and targets, a limit, or a person's approval, decided by something
-  other than the model. A prompt that says "only delete test data" is a wish. A function that
-  refuses any target outside the test schema is a control.
+  A call is a RECOMMENDATION only when its sole effects are reading data that is not
+  confidential and producing text a person reads before anything happens. When a call's class
+  is unclear, it is an ACT. No ACT is granted by default.
+- **SEC-AI-AGT-02 (Blocker):** Every ACT passes a check in code before it runs, decided by
+  something other than the model, and the check controls WHICH operation runs on WHICH target:
+  an allowlist of operations and targets, or a person's approval of that operation on that
+  target. A limit on size, count or spend can sit beside that check, never in its place,
+  because a run held to one message can still send it to the wrong person. A prompt that says
+  "only delete test data" is a wish. A function that refuses any target outside the test schema
+  is a control.
 - **SEC-AI-AGT-03 (Blocker):** The model is never the only judge of whether its own action is
   allowed. When the question is "may this run do X", the answer comes from the identity running
   it and the policy that identity carries, never from the model's reading of its instructions,
@@ -109,10 +116,12 @@ The question before each one is what it can change and whether that change can b
   holds it.
 - **SEC-AI-CMD-02 (Major):** Know whether a command reaches the network, installs software, or
   runs code it downloaded. Each one brings outside code or outside hosts into the session.
-  Never pipe a download into a shell. Before downloaded code runs, check where it came from and
-  that it arrived intact: a checksum or signature published by its maker, or a pinned version
-  from a package registry. Never install a package to find out whether its name exists, because
-  installing runs that package's install script (SEC-DEP-05).
+  Never pipe a download into a shell. Before downloaded code runs, verify that its bytes are
+  the ones its maker published: a checksum or signature from the maker, or the integrity hash a
+  lockfile records and the package manager checks on install. A pinned version alone is not
+  that check, because it chooses the version and says nothing about the bytes. Never install a
+  package to find out whether its name exists, because installing runs that package's install
+  script (SEC-DEP-05).
 - **SEC-AI-CMD-03 (Blocker):** Never route around a permission prompt or a guard. Do not split a
   refused command into pieces that each pass, reword it so the guard stops matching, move it
   into a script the guard does not read, or set the variable that switches the guard off. A
@@ -124,7 +133,7 @@ The question before each one is what it can change and whether that change can b
   when one would unblock the task:
   - deleting production data
   - switching off authentication
-  - going around an authorization check in a real environment
+  - going around an authorization check
   - exposing a secret, in output, a log, a file or a message
   - switching off certificate checking in production
   - switching off a security scan or a guard
@@ -138,9 +147,9 @@ The question before each one is what it can change and whether that change can b
   because neither was given with the target in view. Saying what will happen and then going
   ahead is not approval: stop and wait for the yes.
 
-  An authorised test that attempts a bypass against a test system, without switching the
-  control off, is not on the list. This list is a floor, not a menu: an operation missing from
-  it is not thereby allowed, and SEC-AI-AGT-02 still applies to it.
+  A security test that tries to go around a check is on the list too: a person approves the
+  exact test and its target before it runs. This list is a floor, not a menu: an operation
+  missing from it is not thereby allowed, and SEC-AI-AGT-02 still applies to it.
 
 ## Who checks each rule
 

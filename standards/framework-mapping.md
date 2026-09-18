@@ -623,11 +623,11 @@ appears on none of the ten published lists.
 
 **SEC-AI-CMD-01**
 
-- SSDF: PO.5.2
+- SSDF: PO.1.1
 - OWASP Top 10 2025: not applicable. This rule cites no CWE to derive one from.
 - CWE: none. This rule is a process or conduct requirement, not a code weakness.
 - LLM Top 10 2025: LLM06:2025 Excessive Agency
-- Note: A rule about the agent's own conduct on a development endpoint, which PO.5.2 asks to secure, so it cites no CWE.
+- Note: A security requirement on how development work is done, which PO.1.1 asks an organisation to identify and document. It governs conduct, so it cites no CWE.
 
 **SEC-AI-CMD-02**
 
@@ -642,7 +642,7 @@ appears on none of the ten published lists.
 - OWASP Top 10 2025: not applicable. This rule cites no CWE to derive one from.
 - CWE: none. This rule is a process or conduct requirement, not a code weakness.
 - LLM Top 10 2025: LLM06:2025 Excessive Agency
-- Note: A rule about the agent's own conduct on a development endpoint, which PO.5.2 asks to secure, so it cites no CWE.
+- Note: PO.5.2 because a guard on the developer's machine is part of hardening that endpoint, and routing around it undoes the hardening. It governs conduct, so it cites no CWE.
 
 **SEC-AI-STOP-01**
 

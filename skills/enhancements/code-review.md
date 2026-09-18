@@ -37,9 +37,11 @@ Three checks that look at the whole change rather than one line:
   upload, command execution, deserialization), ask for the THREAT-MODEL.md that covers it. Say
   which surface it touched.
 - If the diff changes authentication, authorization, sessions or an input path, look for a
-  test that attacks it (SEC-TEST-01). The test must assert the refusal: a rejected status or
-  exception and no protected data returned, and for a write, that the protected state did not
-  change. A test that only checks nothing crashed does not count.
+  test that attacks it (SEC-TEST-01). The test must assert the refusal the code defines (a
+  rejected status, an exception, an error result or a false return) and no protected data
+  returned. For a write, it must also assert that the protected state did not change and that
+  no side effect such as a message or a payment happened. A test that only checks nothing
+  crashed does not count.
 - If the diff touches a Dockerfile, compose file or container setting, check SEC-CTR-01 to 03:
   nothing secret in the image, its build context or its build instructions, a production base
   image pinned by `@sha256:` digest, and the least the running container needs.

@@ -247,11 +247,11 @@ Everything above asks whether the code is right. These ask a different question:
 attacked anyway, would anyone see it. The question belongs at design time, because a signal
 that was never designed in cannot be added by looking harder at a log that does not carry it.
 
-**What this pack deliberately does not cover.** Continuous container-level detection, meaning
-container escape, cryptomining, reverse shells and anomalous process execution, needs a runtime
-protection platform and somebody watching it. This pack assumes neither, and a rule that
-assumes a security operations team you do not have is a wish rather than a standard. Those
-remain out of scope, and the three rules below are the part that works without them.
+**What these rules give you.** Detection designed at threat-model time, tested once so you
+know each alert fires, and sized against the logs you actually keep. All three work without a
+runtime protection platform or a security operations team. Continuous container-level
+detection, meaning container escape, cryptomining, reverse shells and anomalous process
+execution, is the job of such a platform, for a team that runs one.
 
 - **SEC-RUN-01 (Major):** For each abuse path the threat model names, say what signal would
   show it happening and where that signal would be visible. A threat with no observable signal
@@ -373,12 +373,13 @@ to a `Dockerfile`, a compose file and any platform setting that starts a contain
   - a URL pointing at an internal address, and a redirect whose target is an internal address
     (SEC-WEB-03)
 
-  Assert the refusal, never the absence of a crash. The assertion is a rejected status code or
-  exception, and no protected data in the response. For a write (create, update, delete, send),
-  also read the protected state back and assert it did not change, and that no side effect
-  such as a message or a payment happened: a delete that ran and returned an empty body looks
-  exactly like one that was refused. Write each assertion so that removing the guard makes
-  exactly that test fail.
+  Assert the refusal, never the absence of a crash. The assertion is the refusal the code
+  defines for that path, such as a rejected status code, an exception, an error result or a
+  false return, and no protected data in what comes back. For a write (create, update, delete,
+  send), also read the protected state back and assert it did not change, and that no side
+  effect such as a message or a payment happened: a delete that ran and returned an empty body
+  looks exactly like one that was refused. Write each assertion so that removing the guard
+  makes exactly that test fail.
 
 ## Who checks each rule
 

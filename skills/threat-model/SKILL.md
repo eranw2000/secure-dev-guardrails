@@ -85,14 +85,19 @@ an attached server. Four questions, one rule each, from
 
 When the model can act, three more, from the "Authority to act" section of the same file:
 
-- **Recommend or act (SEC-AI-AGT-01).** List each tool the model can call and mark it ACT or
-  RECOMMEND by what the call does, not by its name. It is an ACT if it changes stored state
-  (a saved draft and a written file count), sends anything outside the system (a search query
-  to an outside provider counts), reads confidential data, spends money or quota, or cannot be
-  undone. Everything else is RECOMMEND. Every ACT line needs a reason it is granted at all.
-- **The check before the act (SEC-AI-AGT-02).** For each ACT line, name the check in code
-  that runs first: an allowlist of operations and targets, a limit, or a person's approval.
-  A sentence in the prompt is not a check.
+- **Recommend or act (SEC-AI-AGT-01).** List each kind of CALL the model can make, meaning
+  the operation, its arguments and its target, not just the tool, since one shell or database
+  tool makes both kinds. Mark a call ACT if it has any effect beyond returned text: it changes
+  stored state (a saved draft counts) or live state (restarting a service counts), sends
+  anything outside the system (a search query to an outside provider counts), reads
+  confidential data, or spends money or quota. Mark it RECOMMEND only when its sole effects are
+  a non-confidential read and text a person reads first. When unsure, mark it ACT. Every ACT
+  line needs a reason it is granted at all.
+- **The check before the act (SEC-AI-AGT-02).** For each ACT line, name the check in code that
+  runs first and controls which operation runs on which target: an allowlist of operations and
+  targets, or a person's approval of that operation on that target. A size, count or spend
+  limit can sit beside it but does not count as the check. A sentence in the prompt is not a
+  check.
 - **Who decides it is allowed (SEC-AI-AGT-03).** Trace where "may this run do X" is answered.
   It must come from the identity running the model and the policy that identity carries. If
   the answer is the model's own reading of its instructions, that is a Blocker, because an

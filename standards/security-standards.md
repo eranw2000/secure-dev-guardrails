@@ -187,8 +187,10 @@ may ask for at once, and whether the same request can take effect twice.
   code. A name that is not on the registry is a Blocker. A name that exists but was first
   published within the last 90 days, or that is one edit away from a well-known package, is a
   Question for a person: new packages are often fine, and a new package whose name came from a
-  model is the exact shape of the attack. `ci/check-package-exists.py` asks PyPI and npm
-  directly and exits 2, never 0, when a registry does not answer.
+  model is the exact shape of the attack. `ci/check-package-exists.py` answers the existence
+  and age questions by asking PyPI and npm directly, sends a name installed from another
+  registry to a person to confirm there, and exits 2, never 0, when a registry does not
+  answer. The near-miss question is asked by a person at `dependency-review` step 6.
 
 ## Runtime and detection
 

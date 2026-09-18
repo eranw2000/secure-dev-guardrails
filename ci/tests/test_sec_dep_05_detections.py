@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib.util
+import http.client
 import io
 import shutil
 import subprocess
@@ -56,6 +57,22 @@ def write(tmp: Path, name: str, text: str) -> str:
     return str(p)
 
 
+class Breaks:
+    """A response whose body fails while it is being read, after the 200 arrived."""
+
+    def __init__(self, exc):
+        self.exc = exc
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        raise self.exc
+
+
 def live_network_cases() -> None:
     """The code that talks to the real registry, with the network replaced.
 
@@ -75,7 +92,7 @@ def live_network_cases() -> None:
             asked.append(req.full_url)
             if isinstance(answer, Exception):
                 raise answer
-            return io.BytesIO(answer)
+            return answer if isinstance(answer, Breaks) else io.BytesIO(answer)
         return urlopen
 
     def http_error(code):
@@ -87,6 +104,8 @@ def live_network_cases() -> None:
             return mod.fetch_live(eco, name, 1)
         except mod.CannotAsk:
             return "cannot-ask"
+        except Exception as exc:  # a crash is a failure of the check, never a pass
+            return f"crash: {type(exc).__name__}"
 
     checks = [
         ("live: a 404 means the package does not exist",
@@ -102,6 +121,10 @@ def live_network_cases() -> None:
         ("live: a 200 returns the metadata",
          outcome("npm", "left-pad", b'{"time": {"created": "2014-03-14T00:00:00Z"}}')
          == {"time": {"created": "2014-03-14T00:00:00Z"}}),
+        ("live: a connection reset while reading cannot be read as clean",
+         outcome("npm", "x", Breaks(ConnectionResetError("reset"))) == "cannot-ask"),
+        ("live: a truncated body cannot be read as clean",
+         outcome("npm", "x", Breaks(http.client.IncompleteRead(b"{"))) == "cannot-ask"),
     ]
     asked.clear()
     outcome("pypi", "Python_Dateutil", b"{}")
@@ -159,9 +182,22 @@ def main() -> int:
 
     # --- could not ask: never clean ------------------------------------------------------
     case("an unreachable registry exits 2, not 0", ["pypi:flaky-lookup"], 2,
-         ["NOT CHECKED", "Not treating that as clean"])
-    case("a missing name outranks an unreachable one", ["pypi:flaky-lookup", "npm:left-padz"],
-         1, ["NOT CHECKED", "npm:left-padz"])
+         ["NOT CHECKED", "Not treating that as"])
+    case("any name left unchecked makes the whole run exit 2, even beside a missing one",
+         ["pypi:flaky-lookup", "npm:left-padz"], 2, ["NOT CHECKED", "npm:left-padz"])
+
+    # --- a 200 whose body is not a registry answer: never clean --------------------------
+    for label, target in [
+        ("an empty PyPI object", "pypi:no-info"),
+        ("a PyPI answer whose top level is a list", "pypi:top-list"),
+        ("a PyPI answer whose releases is text", "pypi:releases-text"),
+        ("an npm answer for a different package", "npm:wrong-name"),
+        ("an npm answer whose time is text", "npm:time-text"),
+    ]:
+        case(f"shape: {label} exits 2, not 0 and not a traceback", [target], 2,
+             ["NOT CHECKED"], ["Traceback"])
+    case("shape: a timestamp with no zone is read as UTC", ["pypi:naive-time"], 0,
+         ["1 established"], ["Traceback"])
     got, out = subprocess.run(
         [sys.executable, str(SCRIPT), "--offline", "/nonexistent/registry.json", "pypi:x"],
         capture_output=True, text=True).returncode, ""
@@ -176,6 +212,7 @@ def main() -> int:
     # --- manifests ------------------------------------------------------------------------
     with tempfile.TemporaryDirectory() as t:
         tmp = Path(t)
+        write(tmp, "base.txt", "requests\n")  # the -r below is followed; requests is a duplicate
         req = write(tmp, "requirements.txt", "\n".join([
             "# a comment",
             "-r base.txt",
@@ -213,6 +250,62 @@ def main() -> int:
         case("package.json: file and GitHub-shorthand specs are listed for SEC-DEP-02",
              ["--package-json", pkg], 1, ["local: file:../local", "fork: user/repo",
                                         "packed: file:packed.tgz", "sibling: workspace:*"])
+        write(tmp, "more.txt", "requests\n")
+        write(tmp, "cons.txt", "invented-auth-helper==1.0\n")
+        parent = write(tmp, "parent.txt", "-r more.txt\n-c cons.txt\n")
+        case("requirements: -r and -c files are followed and their names checked",
+             ["--requirements", parent], 1,
+             ["1 established", "1 not found", "pypi:invented-auth-helper"])
+        long_form = write(tmp, "long.txt", "--requirement more.txt\n--constraint=cons.txt\n")
+        case("requirements: --requirement and --constraint= are followed too",
+             ["--requirements", long_form], 1, ["pypi:invented-auth-helper"])
+        loop = write(tmp, "loop.txt", "-r loop.txt\nrequests\n")
+        case("requirements: a file that includes itself is read once",
+             ["--requirements", loop], 0, ["1 established"])
+        dangling = write(tmp, "dangling.txt", "-r nowhere.txt\n")
+        case("requirements: an include that cannot be read exits 2",
+             ["--requirements", dangling], 2, ["cannot read a manifest"])
+        compact = write(tmp, "compact.txt",
+                        "internal@file:wheels/internal.whl; python_version >= '3.8'\n"
+                        "other[extra] @file:x.whl\n")
+        case("requirements: a direct reference with no spaces round @ goes to SEC-DEP-02",
+             ["--requirements", compact], 0,
+             ["internal@file:wheels", "other[extra] @file:x.whl"], ["pypi:internal"])
+        private = write(tmp, "private.txt",
+                        "--index-url https://packages.example.invalid/simple\nacme-internal==1.0\n")
+        case("requirements: a private index sends its names to a person, not to PyPI",
+             ["--requirements", private], 0,
+             ["packages.example.invalid", "acme-internal"], ["pypi:acme-internal"])
+        extra = write(tmp, "extra.txt",
+                      "--extra-index-url https://mirror.example.invalid/simple\nrequests\n")
+        case("requirements: an extra index sends its names to a person too",
+             ["--requirements", extra], 0, ["mirror.example.invalid"], ["1 established"])
+        public = write(tmp, "public.txt", "-i https://pypi.org/simple\nrequests\n")
+        case("requirements: naming the public index still checks against it",
+             ["--requirements", public], 0, ["1 established"])
+
+        alias_dir = tmp / "alias"
+        alias_dir.mkdir()
+        alias = write(alias_dir, "package.json", """{"dependencies": {
+          "only-alias": "npm:is-number@7.0.0", "bad-alias": "npm:left-padzz@1.0.0"}}""")
+        case("package.json: an alias is checked as its target, both ways",
+             ["--package-json", alias], 1, ["1 established", "1 not found", "npm:left-padzz"])
+
+        scoped_dir = tmp / "scoped"
+        scoped_dir.mkdir()
+        write(scoped_dir, ".npmrc", "@acme:registry=https://npm.acme.invalid/\n")
+        scoped = write(scoped_dir, "package.json",
+                       '{"dependencies": {"@acme/tool": "1.0.0", "left-pad": "1.3.0"}}')
+        case("package.json: a scope mapped to a private registry goes to a person",
+             ["--package-json", scoped], 0,
+             ["npm.acme.invalid", "@acme/tool", "1 established"], ["npm:@acme/tool"])
+        corp_dir = tmp / "corp"
+        corp_dir.mkdir()
+        write(corp_dir, ".npmrc", "registry=https://npm.corp.invalid/\n")
+        corp = write(corp_dir, "package.json", '{"dependencies": {"left-pad": "1.3.0"}}')
+        case("package.json: a replaced default registry sends every name to a person",
+             ["--package-json", corp], 0, ["npm.corp.invalid", "left-pad"], ["1 established"])
+
         broken = write(tmp, "broken.json", "{not json")
         case("package.json: an unreadable manifest exits 2", ["--package-json", broken], 2,
              ["cannot read a manifest"])
@@ -229,7 +322,7 @@ def main() -> int:
             bad += 1
             print("        " + detail.replace("\n", "\n        "))
     print(f"--- SEC-DEP-05: {len(results) - bad}/{len(results)} ---")
-    if len(results) < 37:
+    if len(results) < 56:
         print("FAIL: fewer cases ran than are written here; the runner is broken")
         return 1
     return 1 if bad else 0

@@ -8,38 +8,49 @@ under them, so the install that should have failed succeeds and runs their code.
 this under LLM09:2025 Misinformation ("The model suggests insecure or non-existent code
 libraries").
 
-This script asks the registry itself. It runs before the name reaches a manifest, or over a
-manifest a change touched.
+This script asks the public registry itself. It runs before the name reaches a manifest, or
+over a manifest a change touched.
 
 Usage
   check-package-exists.py pypi:requests npm:left-pad npm:@types/node
-  check-package-exists.py --requirements requirements.txt
-  check-package-exists.py --package-json package.json
+  check-package-exists.py --requirements requirements.txt   # follows -r and -c
+  check-package-exists.py --package-json package.json       # reads the .npmrc beside it
   check-package-exists.py --young-days 90 pypi:some-new-lib   # age below which to ask
   check-package-exists.py --offline registry.json pypi:x      # canned answers, for tests
 
 Exit codes
-  0  every name exists on its registry (young names are reported, not failed)
+  0  every name checked exists on its registry (young names are listed, not failed)
   1  at least one name is not on its registry (the finding), or is not a valid name
-  2  the check could not run: a registry was unreachable or answered with an error
+  2  the run is incomplete: a registry did not give a usable answer for some name, or a
+     manifest could not be read. This wins over 1, because a run that could not ask about
+     every name has not answered the question, whatever else it found.
 
 Design choices worth keeping:
 
-  - It NEVER exits 0 when it could not ask. A timeout, a 5xx or a rate limit exits 2 and says
-    so. Only a 404 counts as "does not exist", because only a 404 is the registry saying so.
+  - It NEVER exits 0 when it could not ask. A timeout, a reset connection, a 5xx, a rate
+    limit, or a 200 whose body is not a registry answer for that name all exit 2. Only a 404
+    counts as "does not exist", because only a 404 is the registry saying so.
   - A name is validated BEFORE it is put into a URL, so a manifest line cannot steer the
     request to another path on the registry.
-  - A package that exists but was first published recently is reported as a question, not a
+  - A package that exists but was first published recently is listed as a question, not a
     failure. A new package is often fine; a new package whose name an assistant produced is
-    the exact shape of the attack, so a person should look at it.
-  - A dependency from outside the registry (a git URL, a local path, a tarball) is listed by
+    the exact shape of the attack, so a person should look at it. Whether a name is a
+    near-miss of a well-known package is also a question for a person, which the
+    dependency-review skill asks at its step 6.
+  - The public registry is the right place to ask only when it is where the install will
+    look. A requirements file that names another index, or an .npmrc that maps a scope or
+    replaces the default registry, sends those names to a person to confirm against that
+    registry instead.
+  - A dependency from outside any registry (a git URL, a local path, a tarball) is listed by
     name for SEC-DEP-02, which owns where a package comes from.
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import http.client
 import json
+import os
 import re
 import sys
 import urllib.error
@@ -48,6 +59,8 @@ import urllib.request
 
 PYPI_URL = "https://pypi.org/pypi/{name}/json"
 NPM_URL = "https://registry.npmjs.org/{name}"
+PUBLIC_PYPI_INDEXES = {"https://pypi.org/simple", "https://pypi.python.org/simple"}
+PUBLIC_NPM_REGISTRIES = {"https://registry.npmjs.org", "https://registry.npmjs.com"}
 
 # PEP 508 project names, and npm's documented name rules (lowercase, optional @scope/).
 PYPI_NAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
@@ -56,9 +69,14 @@ NPM_NAME = re.compile(r"^(?:@[a-z0-9~][a-z0-9._~-]*/)?[a-z0-9~][a-z0-9._~-]*$")
 NON_REGISTRY_NPM = ("file:", "link:", "workspace:", "git+", "git:", "github:",
                     "http:", "https:", "portal:")
 
+REQ_INCLUDE = re.compile(r"^(-r|--requirement|-c|--constraint)(?:\s+|=)\s*(\S+)$")
+REQ_INDEX = re.compile(r"^(-i|--index-url|--extra-index-url|-f|--find-links)(?:\s+|=)\s*(\S+)$")
+REQ_DIRECT_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\s*(?:\[[^\]]*\])?\s*@")
+REQ_NAME = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)")
+
 
 class CannotAsk(Exception):
-    """The registry did not give a yes-or-no answer."""
+    """The registry did not give a usable yes-or-no answer."""
 
 
 def pypi_normalise(name: str) -> str:
@@ -73,8 +91,8 @@ def valid(eco: str, name: str) -> bool:
 
 # ----------------------------------------------------------------- asking the registry
 
-def fetch_live(eco: str, name: str, timeout: int) -> dict | None:
-    """Return registry metadata, None on a 404, raise CannotAsk on anything else."""
+def fetch_live(eco: str, name: str, timeout: int):
+    """Return the decoded registry answer, None on a 404, raise CannotAsk on anything else."""
     if eco == "pypi":
         url = PYPI_URL.format(name=urllib.parse.quote(pypi_normalise(name), safe=""))
     else:
@@ -87,25 +105,45 @@ def fetch_live(eco: str, name: str, timeout: int) -> dict | None:
         if exc.code == 404:
             return None
         raise CannotAsk(f"{url} answered HTTP {exc.code}")
-    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
-        raise CannotAsk(f"{url}: {exc}")
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
+        # OSError covers a timeout and a connection reset mid-read; HTTPException covers a
+        # truncated body; ValueError covers a body that is not JSON or not UTF-8.
+        raise CannotAsk(f"{url}: {type(exc).__name__}: {exc}")
+
+
+def require_shape(eco: str, name: str, meta) -> None:
+    """A 200 is only an answer if its body is a registry document about this name."""
+    if not isinstance(meta, dict):
+        raise CannotAsk(f"the registry answered for {eco}:{name} with a "
+                        f"{type(meta).__name__}, not a package document")
+    if eco == "pypi":
+        if not isinstance(meta.get("info"), dict) or not isinstance(meta.get("releases"), dict):
+            raise CannotAsk(f"the PyPI answer for {name} has no info and releases objects")
+    else:
+        if meta.get("name") != name:
+            raise CannotAsk(f"the npm answer for {name} names {meta.get('name')!r}")
+        if not isinstance(meta.get("time", {}), dict):
+            raise CannotAsk(f"the npm answer for {name} has a time field that is not an object")
 
 
 def first_published(eco: str, meta: dict) -> dt.datetime | None:
     stamps: list[str] = []
     if eco == "pypi":
-        for files in (meta.get("releases") or {}).values():
-            stamps.extend(f.get("upload_time_iso_8601", "") for f in files or [])
+        for files in meta["releases"].values():
+            for f in files if isinstance(files, list) else []:
+                if isinstance(f, dict):
+                    stamps.append(str(f.get("upload_time_iso_8601") or ""))
     else:
-        stamps.append((meta.get("time") or {}).get("created", ""))
+        stamps.append(str((meta.get("time") or {}).get("created") or ""))
     parsed = []
     for s in stamps:
-        if not s:
-            continue
         try:
-            parsed.append(dt.datetime.fromisoformat(s.replace("Z", "+00:00")))
+            when = dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
         except ValueError:
             continue
+        # Both registries publish UTC. A stamp without a zone is read as UTC rather than
+        # compared with an aware clock, which Python refuses.
+        parsed.append(when if when.tzinfo else when.replace(tzinfo=dt.timezone.utc))
     return min(parsed) if parsed else None
 
 
@@ -124,7 +162,7 @@ class Offline:
             sys.stderr.write(f"cannot read the offline registry file {path}: {exc}\n")
             raise SystemExit(2)
 
-    def __call__(self, eco: str, name: str, timeout: int) -> dict | None:
+    def __call__(self, eco: str, name: str, timeout: int):
         key = pypi_normalise(name) if eco == "pypi" else name
         meta = self.data.get(eco, {}).get(key)
         if meta == "__error__":
@@ -134,36 +172,108 @@ class Offline:
 
 # ----------------------------------------------------------------- reading manifests
 
-def names_from_requirements(path: str) -> tuple[list[str], list[str]]:
-    names, skipped = [], []
+class Manifests:
+    """What the manifests asked for, sorted by who should confirm each name.
+
+    names:       ask the public registry (the targets of this script)
+    elsewhere:   listed for SEC-DEP-02, because they do not come from a registry at all
+    other_index: listed for a person, because the install looks in a registry other than
+                 the public one, so the public registry is the wrong place to ask
+    """
+
+    def __init__(self):
+        self.names: list[tuple[str, str]] = []
+        self.elsewhere: list[str] = []
+        self.other_index: list[str] = []
+
+
+def _logical_lines(text: str) -> list[str]:
+    out, buf = [], ""
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        if line.endswith("\\"):
+            buf += line[:-1] + " "
+            continue
+        out.append(buf + line)
+        buf = ""
+    if buf:
+        out.append(buf)
+    return out
+
+
+def read_requirements(path: str, into: Manifests, seen: set[str] | None = None) -> None:
+    seen = set() if seen is None else seen
+    real = os.path.realpath(path)
+    if real in seen:
+        return
+    seen.add(real)
     with open(path, encoding="utf-8") as fh:
-        for raw in fh:
-            line = raw.split(" #", 1)[0].strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.startswith("-"):
-                # -r other.txt, -e path, --index-url: options, not package names.
-                if line.startswith(("-e", "--editable")):
-                    skipped.append(line)
-                continue
-            if "://" in line or line.startswith((".", "/")):
-                skipped.append(line)
-                continue
-            if " @ " in line:
-                skipped.append(line)
-                continue
-            m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)", line)
-            if m:
-                names.append(m.group(1))
+        lines = _logical_lines(fh.read())
+    here = os.path.dirname(path)
+
+    # pip options apply to the whole file, wherever they sit in it.
+    index = None
+    for raw in lines:
+        m = REQ_INDEX.match(raw.split(" #", 1)[0].strip())
+        if not m:
+            continue
+        url = m.group(2).rstrip("/")
+        if m.group(1) in ("-i", "--index-url") and url in PUBLIC_PYPI_INDEXES:
+            continue
+        index = index or url
+
+    for raw in lines:
+        line = raw.split(" #", 1)[0].strip()
+        if not line or line.startswith("#"):
+            continue
+        inc = REQ_INCLUDE.match(line)
+        if inc:
+            target = inc.group(2)
+            if "://" in target:
+                into.elsewhere.append(line)
             else:
-                skipped.append(line)
-    return names, skipped
+                read_requirements(os.path.join(here, target), into, seen)
+            continue
+        if line.startswith("-"):
+            if line.startswith(("-e", "--editable")):
+                into.elsewhere.append(line)
+            continue  # index options were read above; the rest are not package names
+        if "://" in line or line.startswith((".", "/")) or REQ_DIRECT_REF.match(line):
+            into.elsewhere.append(line)
+            continue
+        m = REQ_NAME.match(line)
+        if not m:
+            into.elsewhere.append(line)
+        elif index:
+            into.other_index.append(f"{m.group(1)}  (index {index})")
+        else:
+            into.names.append(("pypi", m.group(1)))
 
 
-def names_from_package_json(path: str) -> tuple[list[str], list[str]]:
+def _npmrc_registries(package_json: str) -> tuple[str | None, dict[str, str]]:
+    """The project's .npmrc: a replaced default registry, and any scope mappings."""
+    default, scopes = None, {}
+    rc = os.path.join(os.path.dirname(package_json), ".npmrc")
+    if not os.path.exists(rc):
+        return default, scopes
+    with open(rc, encoding="utf-8") as fh:
+        for raw in fh:
+            key, sep, value = raw.strip().partition("=")
+            key, value = key.strip(), value.strip().rstrip("/")
+            if not sep or key.startswith((";", "#")):
+                continue
+            if key == "registry" and value not in PUBLIC_NPM_REGISTRIES:
+                default = value
+            elif key.startswith("@") and key.endswith(":registry") \
+                    and value not in PUBLIC_NPM_REGISTRIES:
+                scopes[key[: -len(":registry")]] = value
+    return default, scopes
+
+
+def read_package_json(path: str, into: Manifests) -> None:
     with open(path, encoding="utf-8") as fh:
         doc = json.load(fh)
-    names, skipped = [], []
+    default, scopes = _npmrc_registries(path)
     for section in ("dependencies", "devDependencies", "optionalDependencies",
                     "peerDependencies"):
         for name, spec in (doc.get(section) or {}).items():
@@ -172,13 +282,19 @@ def names_from_package_json(path: str) -> tuple[list[str], list[str]]:
                 # An alias: the real package is the part after npm:, before the version.
                 target = spec[4:]
                 at = target.rfind("@")
-                names.append(target[:at] if at > 0 else target)
+                real = target[:at] if at > 0 else target
             elif spec.startswith(NON_REGISTRY_NPM) or "/" in spec:
                 # a "/" in a version spec is GitHub shorthand (user/repo), never a range.
-                skipped.append(f"{name}: {spec}")
+                into.elsewhere.append(f"{name}: {spec}")
+                continue
             else:
-                names.append(name)
-    return names, skipped
+                real = name
+            scope = real.split("/", 1)[0] if real.startswith("@") else None
+            registry = scopes.get(scope) or default
+            if registry:
+                into.other_index.append(f"{real}  (registry {registry})")
+            else:
+                into.names.append(("npm", real))
 
 
 # ----------------------------------------------------------------- the check
@@ -198,13 +314,14 @@ def check(targets: list[tuple[str, str]], fetch, young_days: int, timeout: int,
             continue
         try:
             meta = fetch(eco, name, timeout)
+            if meta is None:
+                missing.append(f"{eco}:{name}")
+                continue
+            require_shape(eco, name, meta)
+            born = first_published(eco, meta)
         except CannotAsk as exc:
             unreachable.append(f"{eco}:{name}  ({exc})")
             continue
-        if meta is None:
-            missing.append(f"{eco}:{name}")
-            continue
-        born = first_published(eco, meta)
         if born is None:
             young.append(f"{eco}:{name}  (exists, but the registry shows no published file)")
         elif (now - born).days < young_days:
@@ -230,13 +347,13 @@ def check(targets: list[tuple[str, str]], fetch, young_days: int, timeout: int,
         for m in young:
             print(f"  {m}")
     if unreachable:
-        print("\nNOT CHECKED: the registry did not answer. Not treating that as clean:")
+        print("\nNOT CHECKED: the registry did not give a usable answer. Not treating that as")
+        print("clean, so the run exits 2:")
         for m in unreachable:
             print(f"  {m}")
+        return 2
     if missing or invalid:
         return 1
-    if unreachable:
-        return 2
     return 0
 
 
@@ -258,32 +375,35 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--offline", metavar="FILE", help="canned registry answers (tests)")
     args = ap.parse_args(argv)
 
-    targets = [parse_target(t) for t in args.target]
-    skipped: list[str] = []
+    found = Manifests()
+    found.names = [parse_target(t) for t in args.target]
     try:
         for path in args.requirements:
-            names, skip = names_from_requirements(path)
-            targets += [("pypi", n) for n in names]
-            skipped += skip
+            read_requirements(path, found)
         for path in args.package_json:
-            names, skip = names_from_package_json(path)
-            targets += [("npm", n) for n in names]
-            skipped += skip
+            read_package_json(path, found)
     except (OSError, ValueError) as exc:
         sys.stderr.write(f"cannot read a manifest: {exc}\n")
         return 2
 
-    if skipped:
-        print("From outside the registry, listed for SEC-DEP-02, which owns where a package comes from:")
-        for s in skipped:
+    if found.elsewhere:
+        print("From outside any registry, listed for SEC-DEP-02, which owns where a package "
+              "comes from:")
+        for s in found.elsewhere:
             print(f"  {s}")
         print()
-    if not targets:
-        print("No package names given, nothing to check.")
+    if found.other_index:
+        print("INSTALLED FROM A CONFIGURED REGISTRY, a question for a person (SEC-DEP-05).")
+        print("Confirm each name on that registry; the public one is the wrong place to ask:")
+        for s in found.other_index:
+            print(f"  {s}")
+        print()
+    if not found.names:
+        print("No names for the public registries, nothing to check there.")
         return 0
 
     fetch = Offline(args.offline) if args.offline else fetch_live
-    return check(targets, fetch, args.young_days, args.timeout)
+    return check(found.names, fetch, args.young_days, args.timeout)
 
 
 if __name__ == "__main__":

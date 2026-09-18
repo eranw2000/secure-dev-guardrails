@@ -36,8 +36,10 @@ ci/check-package-exists.py --requirements requirements.txt --package-json packag
 ```
 
 Exit 1 is a Blocker: the name is not on the registry, which is how an invented name looks
-before an attacker registers it. A name listed as young, or one edit away from a well-known
-package, goes to step 6 as a Question. Exit 2 means a registry did not answer: record the name
+before an attacker registers it. A name listed as young, or listed as installed from a
+configured registry, goes to step 6 as a Question; confirm the second kind on that registry.
+Step 6 also asks whether any added name is one edit away from a well-known package; that one
+is a reviewer's judgment. Exit 2 means a registry did not answer: record the name
 as unconfirmed in the report's Limits section rather than as clean.
 
 ### 2. Known vulnerabilities (SEC-DEP-01)

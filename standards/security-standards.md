@@ -39,8 +39,26 @@ Scope languages: Python, JavaScript/TypeScript, Java/C#.
 - **SEC-WEB-02 (Blocker):** Every endpoint that returns or mutates non-public data performs an
   authorization check that ties the request identity to the specific resource (object-level
   authz), not just authentication. Guards against IDOR.
-- **SEC-WEB-03 (Major):** No SSRF-prone fetches: user-supplied URLs are validated against an
-  allowlist and resolved hosts are checked against internal ranges before the request.
+- **SEC-WEB-03 (Major):** A server-side request to a URL that came from outside is sent only
+  after every one of these holds:
+  - The scheme is `http` or `https`.
+  - The host is on an allowlist. Where the product genuinely has to reach any host, every
+    address the name resolves to is a public unicast address: not loopback, private,
+    link-local, carrier-grade NAT, unique-local, unspecified (`0.0.0.0`, `::`), multicast,
+    reserved or documentation space. Unwrap an IPv4-mapped IPv6 address (`::ffff:127.0.0.1`)
+    before checking it, and check the address the resolver returns rather than the text, since
+    `2130706433`, `0x7f000001` and `127.1` all mean `127.0.0.1`. In Python that is
+    `ipaddress.ip_address(a)` after `.ipv4_mapped`, with `is_global` true AND `is_multicast`
+    false, because `is_global` alone accepts a multicast address.
+  - Cloud metadata endpoints are refused by name as well as by range, since some are reached
+    through a hostname: `169.254.169.254`, `fd00:ec2::254`, `fd20:ce::254`,
+    `metadata.google.internal`, `metadata.goog`, `100.100.100.200` and `192.0.0.192`.
+  - The request goes to the address that was checked, so a second DNS answer cannot swap in an
+    internal one between the check and the call.
+  - Redirects are off, or each hop is checked the same way before it is followed.
+  - The response has a size cap and a timeout.
+  - The outgoing URL is rebuilt from the parts that were checked, never the original string,
+    because two URL parsers can read one string as two different hosts.
 - **SEC-WEB-04 (Major):** CORS, CSRF, and cookie flags are explicit. No wildcard CORS with
   credentials; state-changing routes are CSRF-protected; cookies set `HttpOnly`, `Secure`,
   `SameSite`.
@@ -149,16 +167,47 @@ may ask for at once, and whether the same request can take effect twice.
   passwords.
 - **SEC-CRYPTO-03 (Major):** No custom crypto. Use the platform/library primitive.
 
+## Data stores
+
+- **SEC-DB-01 (Major):** The application connects to its database with an account that holds
+  only what the running service needs. Never the superuser or owner login (`postgres`, `root`,
+  `sa`, a cloud administrator). Schema changes run under a separate migration account that the
+  running service does not hold, a component that only reads gets a read-only account, and the
+  database port is reachable only from the hosts that use it.
+
 ## Files, paths, and access
 
 - **SEC-PATH-01 (Major):** No path built from untrusted input without canonicalization and a
   containment check (guard against `../` traversal).
 - **SEC-PATH-02 (Nit):** Temp files are created with safe permissions and unpredictable names.
+- **SEC-UPLOAD-01 (Major):** An uploaded file is accepted only when:
+  - Its type is on an allowlist and its content matches that type (read the first bytes; the
+    extension and the client's `Content-Type` are both chosen by the sender).
+  - Its size is capped while it streams in, not measured after it has landed.
+  - It is stored under a name the server generates, outside any directory the web server
+    serves or runs as code, and within a per-user storage quota.
+  - It is served back with `Content-Disposition: attachment` and
+    `X-Content-Type-Options: nosniff`, or from a separate domain, so an uploaded page cannot
+    run as your site.
+  - An archive is unpacked with every entry's final path checked to sit inside the target
+    directory, links refused unless the product needs them, and caps on the number of entries
+    and the total unpacked size. In Python, `tarfile` extraction takes `filter="data"` (Python
+    3.12, and 3.8.17, 3.9.17, 3.10.12 and 3.11.4 onward; the default from 3.14). That filter
+    blocks absolute paths, `../` and links pointing outside the target, and still allows a link
+    that stays inside it, so refuse links yourself where you do not need them. For a tar,
+    `shutil.unpack_archive` takes the same `filter`; for a zip it refuses one, and `zipfile`
+    strips unsafe names itself, so the zip half of the rule is the size and count caps.
 
 ## Logging and error handling (security side; privacy side is in PRIV-LOG)
 
 - **SEC-LOG-01 (Major):** No secrets, tokens, or full request bodies logged. (PII in logs is
   covered by `PRIV-LOG-01`.)
+- **SEC-LOG-02 (Major):** A value from outside reaches a log only as a field of a structured
+  logger, or with carriage returns, line feeds and other control characters escaped, so a user
+  cannot write a line that looks like a real event. Security events (sign-in success and
+  failure, a permission refused, a role or credential change, an export of personal data)
+  carry who (an account id, never the person's details), what, the target, the outcome, a UTC
+  timestamp and a request id, which is what SEC-RUN-01 needs to find them.
 - **SEC-ERR-01 (Nit):** No stack traces or internal detail returned to clients in production
   error responses.
 
@@ -253,7 +302,8 @@ Every rule below has exactly one owner. Nothing is left to "somebody will notice
 2026-08-28, when four rules moved from having no owner into the warning hook and the rest were
 assigned explicitly, again on 2026-09-02 when the four CI rules were added with owners in the
 same edit, again on 2026-09-03 for the six authentication rules, again on 2026-09-16 for
-the six API design rules, and again on 2026-09-18 for SEC-DEP-05.
+the six API design rules, again on 2026-09-18 for SEC-DEP-05, and again the same day for
+SEC-UPLOAD-01, SEC-LOG-02 and SEC-DB-01.
 
 **Blocked by a hook (2).** `secret-scan.sh` refuses the write.
 
@@ -265,6 +315,10 @@ payment or personal-data one.
 
 - SEC-INJ-01, SEC-INJ-02, SEC-INJ-03, SEC-WEB-01, SEC-WEB-04, SEC-CRYPTO-01, SEC-CRYPTO-02,
   SEC-PATH-01, SEC-PATH-02, SEC-LOG-01, SEC-SECRET-03, SEC-API-02.
+
+The same hook also reports shapes of SEC-WEB-03, SEC-UPLOAD-01 and SEC-DB-01. Those three are
+owned at review, below, because most of each rule sits outside any one file; the hook is an
+assist to that owner.
 
 `SEC-API-02` is also checked by the semgrep rules in `ci/semgrep/security.yml`, which read the
 structure of a Python, JavaScript or TypeScript file: a serializer or model form with
@@ -298,7 +352,7 @@ about the running system and its logging, not about a line of code.
 
 - SEC-RUN-01, SEC-RUN-02, SEC-RUN-03.
 
-**Review-time only (17), and each for a stated reason.** Each is decided by reading how several
+**Owned at review (20), each for a stated reason, some with a pattern that assists.** Each is decided by reading how several
 parts of the code fit together, so they belong to `security-review`, `code-reviewer` and a human.
 
 - SEC-WEB-02, object-level authorization. Whether a route checks that this caller owns this
@@ -336,8 +390,34 @@ parts of the code fit together, so they belong to `security-review`, `code-revie
   each list endpoint's query.
 - SEC-API-06, a request taking effect twice. Settled by reading the signature check together
   with the store that records event ids, which sit in different files.
-- SEC-WEB-03, requests to internal addresses. Deciding this needs the origin of the value, which
-  is a data-flow question.
+- SEC-WEB-03, requests to internal addresses. Whether a URL came from outside is a data-flow
+  question, and most of the rule (address checks, pinning, redirects, caps) lives in a helper
+  the request goes through. The semgrep rules follow a request value (`request.*`, and `.GET` or
+  `.POST` on any Django request object) into `requests`, `httpx`, `urllib`, `aiohttp`, a
+  `requests` or `httpx` session or client, `fetch`, `axios`, `got` and Node's `http` within one
+  function, and the hook reports the same flow written on one line. Both stay quiet when the
+  value passes through a function whose name carries a guard word (allow, validate, check,
+  safe, ensure, verify) and a target word (url, host, address, outbound, destination, target),
+  so a reviewer reads that helper. The reviewer also reads the flows that reach a request some other way: a
+  framework that binds a query value straight to a function parameter (FastAPI, for one), and
+  a client passed in from another function. The owner is the reviewer, and the patterns are an
+  assist.
+- SEC-UPLOAD-01, uploaded files. Type checks, streaming caps, generated names and where the
+  file is served from sit in the upload view, the storage setting and the web server together.
+  The archive half is mechanical: semgrep reports Python `tarfile` extraction (from
+  `tarfile.open`, `TarFile.open` or the `TarFile` constructor) and `shutil.unpack_archive`
+  unless the filter is `"data"`, `"tar"` or their `tarfile` functions, so a filter held in a
+  variable is reported for a person to read; the hook reports the same calls with no filter, or
+  with `"fully_trusted"`. The reviewer also reads a tar object handed over through a second
+  variable or another function. The owner is the reviewer, and the patterns are an assist.
+- SEC-LOG-02, forged log lines and security-event fields. Whether a logger escapes control
+  characters is a property of its configuration, and whether an event carries its fields is
+  settled by reading the event against the list in the rule.
+- SEC-DB-01, the database account. The account is usually named in an environment variable or
+  a secret store, so the file under review rarely shows it. The hook reports the shape that does
+  show it: a connection URL, a key=value or keyword login on a line that names a database, or
+  a Django `DATABASES` entry, logging in as `postgres`, `root`, `sa` or `admin`. The migration split and read-only accounts are settled by reading the deployment.
+  The owner is the reviewer, and the pattern is an assist.
 - SEC-CRYPTO-03, hand-rolled cryptography. Recognising that a loop is a cipher is not a pattern
   match.
 - SEC-ERR-01, internal detail in a client-facing error. Whether a string reaches a user depends

@@ -22,7 +22,7 @@ only an opinion held firmly.
 
 ## What is deliberately not mapped, and why
 
-- **A CWE that no 2025 category covers gets no OWASP row.** Seven are in that position and
+- **A CWE that no 2025 category covers gets no OWASP row.** Eight are in that position and
   each says so on its own line. Assigning them to the nearest-sounding category would make
   the file look complete and be wrong, and a false citation is worse than a missing one.
 - **SLSA build levels, OWASP SAMM and ISO 27001 Annex A are not mapped.** SAMM and ISO
@@ -268,6 +268,25 @@ appears on none of the ten published lists.
 - CWE: CWE-1357 Reliance on Insufficiently Trustworthy Component; CWE-829 Inclusion of Functionality from Untrusted Control Sphere
 - LLM Top 10 2025: LLM03:2025 Supply Chain; LLM09:2025 Misinformation
 - Note: OWASP LLM09:2025 names this case: a model suggesting non-existent code libraries, which attackers then register.
+
+**SEC-UPLOAD-01**
+
+- SSDF: PW.5.1
+- OWASP Top 10 2025: A01:2025 Broken Access Control; A06:2025 Insecure Design
+- CWE: CWE-434 Unrestricted Upload of File with Dangerous Type; CWE-22 Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal'); CWE-409 Improper Handling of Highly Compressed Data (Data Amplification) (no 2025 category)
+- Note: The archive half (every entry inside the target, no links, size and count caps) is the zip-slip and zip-bomb case, CWE-22 and CWE-409.
+
+**SEC-LOG-02**
+
+- SSDF: PW.5.1, PW.1.1
+- OWASP Top 10 2025: A09:2025 Security Logging and Alerting Failures
+- CWE: CWE-117 Improper Output Neutralization for Logs; CWE-778 Insufficient Logging
+
+**SEC-DB-01**
+
+- SSDF: PW.9.1, PO.5.1
+- OWASP Top 10 2025: A06:2025 Insecure Design
+- CWE: CWE-250 Execution with Unnecessary Privileges (no 2025 category); CWE-269 Improper Privilege Management
 
 ## CI and pipeline rules
 

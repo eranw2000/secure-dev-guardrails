@@ -4,8 +4,8 @@
 # rather than Blocker/deny).
 #
 # Wired as a PostToolUse hook on Edit/Write. Reads the file on disk after the edit and greps
-# for language-specific dangerous patterns (SEC-INJ, SEC-WEB-01, SEC-CRYPTO-01, SEC-PATH-01,
-# SEC-AUTH-03, SEC-API-02).
+# for language-specific dangerous patterns (SEC-INJ, SEC-WEB-01, SEC-WEB-03, SEC-CRYPTO-01,
+# SEC-PATH-01, SEC-UPLOAD-01, SEC-DB-01, SEC-AUTH-03, SEC-API-02).
 #
 # Protocol: read JSON from stdin, emit hookSpecificOutput.additionalContext WITH
 # hookEventName:"PostToolUse" (the field is required or the context is dropped), exit 0.
@@ -62,6 +62,19 @@ grep -Eqn 'csrf_exempt|CSRF_TRUSTED_ORIGINS[[:space:]]*=[[:space:]]*\[[[:space:]
 grep -Eqn '(subprocess|os\.system|execSync|Runtime\.getRuntime|ProcessBuilder).*(--password|--token|--api-key|--secret|--pass=|-p[[:space:]]+["'\'']?\$)' "$FILE_PATH" \
   && add "SEC-SECRET-03" "credential passed on a command line (use a file or an env var)"
 
+# --- SEC-DB-01: the application logs in to its database as the superuser or owner. Only the
+# shapes that name the login in the file: a connection URL, a key=value or keyword login on a
+# line that also names a database, and Django's DATABASES entry in a file that has DATABASES.
+# A host NAMED postgres is common in container setups and is not a login, so in a URL the login
+# has to sit right after the scheme. A plain `user = "root"` names no database and stays quiet.
+DB_LOGIN='(sa|root|postgres|admin)'
+{ grep -Eiq "(postgres(ql)?|mysql|mariadb|mssql|sqlserver|mongodb(\+srv)?)(\+[a-z0-9]+)?://${DB_LOGIN}(:|@)" "$FILE_PATH" \
+  || grep -Ei "(user[[:space:]]*id|userid|uid|username|user)[[:space:]]*=[[:space:]]*[\"']?${DB_LOGIN}[\"']?[[:space:]]*(;|,|\)|\"|$)" "$FILE_PATH" \
+       | grep -Eiq 'connect|database|db_|server=|host=|data source|psycopg|pymysql|mysql|mariadb|postgres|sqlalchemy|sequelize|knex|mongo|mssql|sqlserver|pool' \
+  || { grep -q 'DATABASES' "$FILE_PATH" \
+       && grep -Eiq "[\"']USER[\"'][[:space:]]*:[[:space:]]*[\"']${DB_LOGIN}[\"']" "$FILE_PATH"; }; } \
+  && add "SEC-DB-01" "database login as the superuser or owner (use an account with only what the service needs)"
+
 # --- SEC-PATH-02: predictable temp file, or a world-writable mode ---
 grep -Eqn 'tempfile\.mktemp[[:space:]]*\(|os\.chmod[^)]*0o?777|chmod[[:space:]]+777' "$FILE_PATH" \
   && add "SEC-PATH-02" "predictable temp name or world-writable mode"
@@ -87,6 +100,40 @@ case "$FILE_PATH" in
       && add "SEC-INJ-01" "SQL built by string formatting/concatenation"
     grep -Eqn 'open[[:space:]]*\([^)]*(request|input|argv|params)' "$FILE_PATH" \
       && add "SEC-PATH-01" "file path from untrusted input (check for traversal)"
+    # SEC-WEB-03: a request value written straight into an outgoing request on one line. A value
+    # passed through a helper first starts the argument with the helper's name and stays quiet;
+    # flows through a variable are semgrep's.
+    WEB_RECV='(requests|httpx|aiohttp|requests\.Session\(\)|httpx\.(Async)?Client\(\)|[A-Za-z_]*(session|client|Session|Client))'
+    WEB_PRE="([\"'][A-Z]+[\"'][[:space:]]*,[[:space:]]*|method[[:space:]]*=[[:space:]]*[\"'][A-Z]+[\"'][[:space:]]*,[[:space:]]*)?(url[[:space:]]*=[[:space:]]*)?(urljoin[[:space:]]*\([^)]*,[[:space:]]*)?"
+    WEB_SRC='request\.(args|form|values|json|get_json|GET|POST|data|query_params)'
+    grep -Eqn "${WEB_RECV}\.(get|post|put|patch|delete|head|options|request|stream)[[:space:]]*\([[:space:]]*${WEB_PRE}${WEB_SRC}|urlopen[[:space:]]*\([[:space:]]*${WEB_SRC}" "$FILE_PATH" \
+      && add "SEC-WEB-03" "a request value used as the URL of an outgoing request (check scheme, host and address first)"
+    # SEC-UPLOAD-01: tar extraction with no path filter. The hook reads one line at a time, so it
+    # looks only in a file that uses tarfile or unpack_archive; there, a zipfile extraction beside
+    # tarfile is reported here and semgrep, which parses, stays quiet.
+    if grep -Eq 'tarfile|unpack_archive' "$FILE_PATH"; then
+      # Read each extraction call to its closing parenthesis (at most 8 lines), so a filter on
+      # a later line of the same call counts.
+      UNPACK=$(awk '
+        function n(str, ch,   c, k) { c = 0; for (k = 1; k <= length(str); k++) if (substr(str, k, 1) == ch) c++; return c }
+        function done() {
+          if (buf ~ /filter[ \t]*=[ \t]*["'\'']fully_trusted/) print "trusted"
+          else if (buf !~ /filter[ \t]*=/) print "nofilter"
+          open = 0
+        }
+        {
+          if (open) { buf = buf " " $0; lines++; if (n(buf, "(") <= n(buf, ")") || lines >= 8) done(); next }
+          if (match($0, /(\.extractall|\.extract|unpack_archive)[ \t]*\(/)) {
+            buf = substr($0, RSTART); lines = 1; open = 1
+            if (n(buf, "(") <= n(buf, ")")) done()
+          }
+        }
+        END { if (open) done() }' "$FILE_PATH")
+      echo "$UNPACK" | grep -q nofilter \
+        && add "SEC-UPLOAD-01" "archive unpacked with no path filter (pass filter=\"data\")"
+      echo "$UNPACK" | grep -q trusted \
+        && add "SEC-UPLOAD-01" "archive unpacked with filter=\"fully_trusted\", which is no filter"
+    fi
     # SEC-API-02: fields = "__all__" in the Meta block that belongs to a serializer or model form.
     # The awk program keeps a stack of class and def scopes by indentation, so the Meta has to be
     # a direct child of a class whose bases name one of those base classes. A class header
@@ -127,6 +174,9 @@ case "$FILE_PATH" in
       && add "SEC-WEB-01" "untrusted data into innerHTML/dangerouslySetInnerHTML/document.write"
     grep -Eqn 'query[[:space:]]*\([[:space:]]*`[^`]*\$\{|query[[:space:]]*\([[:space:]]*["'\''][^"'\'']*["'\''][[:space:]]*\+|\.raw[[:space:]]*\(' "$FILE_PATH" \
       && add "SEC-INJ-01" "SQL built by template literal/concatenation"
+    # SEC-WEB-03: a request value written straight into an outgoing request on one line.
+    grep -Eqn '(^|[^A-Za-z0-9_$.])(fetch|axios|got|axios\.(get|post|put|patch|delete|head|request)|got\.(get|post|put|patch|delete|head)|https?\.(get|request))[[:space:]]*\([[:space:]]*(req|request|ctx|ctx\.request)\.(query|body|params)' "$FILE_PATH" \
+      && add "SEC-WEB-03" "a request value used as the URL of an outgoing request (check scheme, host and address first)"
     # SEC-API-02: the whole request body in a model write written on one line: a create, a
     # two-argument create or update whose fields option is not a list of string literals, a
     # filter-and-update whose second argument is the body, a Prisma data object, a constructor,
@@ -162,7 +212,7 @@ FINDINGS=$(printf '%b' "$FINDINGS")
 jq -n --arg file "$FILE_PATH" --arg f "$FINDINGS" '{
   hookSpecificOutput: {
     hookEventName: "PostToolUse",
-    additionalContext: ("DANGEROUS-PATTERN WARNING in " + $file + " (standards/security-standards.md):" + $f + "\n\nThese need judgment rather than an automatic block. Read the band from the rule itself in standards/security-standards.md, because it is not the same for every pattern above: SEC-AUTH-03 and SEC-CRYPTO-01 are Blockers, most of the rest are Major. Confirm the input is trusted or switch to the safe alternative the standard names (parameterized queries, argument-vector exec, a sanitizer, AES-GCM, a path containment check, and for a token: verify the signature with a pinned algorithm list, then check issuer, audience, expiry and intended type). If it is a genuine false positive, note why.")
+    additionalContext: ("DANGEROUS-PATTERN WARNING in " + $file + " (standards/security-standards.md):" + $f + "\n\nThese need judgment rather than an automatic block. Read the band from the rule itself in standards/security-standards.md, because it is not the same for every pattern above: SEC-AUTH-03 and SEC-CRYPTO-01 are Blockers, most of the rest are Major. Confirm the input is trusted or switch to the safe alternative the standard names (parameterized queries, argument-vector exec, a sanitizer, AES-GCM, a path containment check, a checked address for an outgoing request, filter=\"data\" for an archive, a least-privilege database account, and for a token: verify the signature with a pinned algorithm list, then check issuer, audience, expiry and intended type). If it is a genuine false positive, note why.")
   }
 }'
 exit 0

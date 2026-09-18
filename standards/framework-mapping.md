@@ -288,6 +288,41 @@ appears on none of the ten published lists.
 - OWASP Top 10 2025: A06:2025 Insecure Design
 - CWE: CWE-250 Execution with Unnecessary Privileges (no 2025 category); CWE-269 Improper Privilege Management
 
+**SEC-CTR-01**
+
+- SSDF: PS.1.1, PW.9.1
+- OWASP Top 10 2025: A01:2025 Broken Access Control; A07:2025 Authentication Failures
+- CWE: CWE-538 Insertion of Sensitive Information into Externally-Accessible File or Directory; CWE-798 Use of Hard-coded Credentials
+- Note: Two weaknesses: a file that should never have been in the image, and a credential written into a layer. They land in different categories.
+
+**SEC-CTR-02**
+
+- SSDF: PW.4.1, PW.4.4
+- OWASP Top 10 2025: A03:2025 Software Supply Chain Failures; A08:2025 Software or Data Integrity Failures
+- CWE: CWE-1357 Reliance on Insufficiently Trustworthy Component; CWE-829 Inclusion of Functionality from Untrusted Control Sphere
+- Note: The same supply-chain pair as a pinned pipeline action, applied to the base image.
+
+**SEC-CTR-03**
+
+- SSDF: PW.9.1
+- OWASP Top 10 2025: none. No 2025 category lists this rule's CWE.
+- CWE: CWE-250 Execution with Unnecessary Privileges (no 2025 category); CWE-770 Allocation of Resources Without Limits or Throttling (no 2025 category)
+- Note: Neither weakness is on a 2025 category list, so no OWASP row is claimed for it.
+
+**SEC-DES-01**
+
+- SSDF: PW.1.1
+- OWASP Top 10 2025: not applicable. This rule cites no CWE to derive one from.
+- CWE: none. This rule is a process or conduct requirement, not a code weakness.
+- Note: A practice rule rather than a weakness, so it cites the SSDF task and no CWE.
+
+**SEC-TEST-01**
+
+- SSDF: PW.8.2
+- OWASP Top 10 2025: not applicable. This rule cites no CWE to derive one from.
+- CWE: none. This rule is a process or conduct requirement, not a code weakness.
+- Note: A practice rule rather than a weakness. Each case in its list cites the rule it tests, and those rules carry the CWEs.
+
 ## CI and pipeline rules
 
 **SEC-CI-01**
@@ -525,7 +560,7 @@ appears on none of the ten published lists.
 
 - SSDF: PS.3.2, PW.1.2
 - OWASP Top 10 2025: not applicable. This rule cites no CWE to derive one from.
-- CWE: none. This rule is a legal or process obligation, not a code weakness.
+- CWE: none. This rule is a process or conduct requirement, not a code weakness.
 - LLM Top 10 2025: LLM08:2025 Vector and Embedding Weaknesses
 
 **SEC-AI-MCP-01**
@@ -555,6 +590,67 @@ appears on none of the ten published lists.
 - OWASP Top 10 2025: A06:2025 Insecure Design
 - CWE: CWE-269 Improper Privilege Management
 - LLM Top 10 2025: LLM06:2025 Excessive Agency
+
+**SEC-AI-AGT-01**
+
+- SSDF: PW.1.1
+- OWASP Top 10 2025: A06:2025 Insecure Design
+- CWE: CWE-269 Improper Privilege Management
+- LLM Top 10 2025: LLM06:2025 Excessive Agency
+
+**SEC-AI-AGT-02**
+
+- SSDF: PW.1.1, PW.5.1
+- OWASP Top 10 2025: A01:2025 Broken Access Control
+- CWE: CWE-862 Missing Authorization
+- LLM Top 10 2025: LLM06:2025 Excessive Agency
+
+**SEC-AI-AGT-03**
+
+- SSDF: PW.1.1, PW.5.1
+- OWASP Top 10 2025: A01:2025 Broken Access Control
+- CWE: CWE-285 Improper Authorization
+- LLM Top 10 2025: LLM01:2025 Prompt Injection; LLM06:2025 Excessive Agency
+- Note: LLM01 as well, because the instructions the model would judge by are what an injected document rewrites.
+
+**SEC-AI-AGT-04**
+
+- SSDF: PO.5.2, PW.1.1
+- OWASP Top 10 2025: A06:2025 Insecure Design
+- CWE: CWE-269 Improper Privilege Management
+- LLM Top 10 2025: LLM06:2025 Excessive Agency
+- Note: PO.5.2 because the permission settings an agent could widen are part of hardening the development endpoint it runs on.
+
+**SEC-AI-CMD-01**
+
+- SSDF: PO.1.1
+- OWASP Top 10 2025: not applicable. This rule cites no CWE to derive one from.
+- CWE: none. This rule is a process or conduct requirement, not a code weakness.
+- LLM Top 10 2025: LLM06:2025 Excessive Agency
+- Note: A security requirement on how development work is done, which PO.1.1 asks an organisation to identify and document. It governs conduct, so it cites no CWE.
+
+**SEC-AI-CMD-02**
+
+- SSDF: PW.4.4
+- OWASP Top 10 2025: A08:2025 Software or Data Integrity Failures
+- CWE: CWE-494 Download of Code Without Integrity Check
+- LLM Top 10 2025: LLM03:2025 Supply Chain; LLM06:2025 Excessive Agency
+
+**SEC-AI-CMD-03**
+
+- SSDF: PO.5.2
+- OWASP Top 10 2025: not applicable. This rule cites no CWE to derive one from.
+- CWE: none. This rule is a process or conduct requirement, not a code weakness.
+- LLM Top 10 2025: LLM06:2025 Excessive Agency
+- Note: PO.5.2 because a guard on the developer's machine is part of hardening that endpoint, and routing around it undoes the hardening. It governs conduct, so it cites no CWE.
+
+**SEC-AI-STOP-01**
+
+- SSDF: PO.2.1
+- OWASP Top 10 2025: not applicable. This rule cites no CWE to derive one from.
+- CWE: none. This rule is a process or conduct requirement, not a code weakness.
+- LLM Top 10 2025: LLM06:2025 Excessive Agency
+- Note: PO.2.1 because the rule assigns a responsibility: who may approve each operation. Excessive Agency is the risk a human stop addresses. The nine operations each map to weaknesses covered by their own rules.
 
 ## Sources, each read on 2026-09-02
 

@@ -20,6 +20,16 @@ systems that have users at all.
    vocabulary the mitigations should map to.
 3. `standards/severity-taxonomy.md` for banding.
 
+## When a change needs this
+
+SEC-DES-01 in `standards/security-standards.md` lists the surfaces that require a threat model
+before a change merges: authentication, identity and sessions, authorization and IAM,
+cryptography, infrastructure and production networking, agents and runs with no person
+watching, connected servers, file upload, command execution reached from input, and
+deserialization of outside data. When a reviewer asks for this model because a change touched
+one of those, name the surface at the top of THREAT-MODEL.md, so the reviewer can match the
+model to the request.
+
 ## Process
 
 ### 1. Sketch the system and its trust boundaries
@@ -60,7 +70,7 @@ For each flow that touches personal data, walk the seven categories:
 Skip this pass when no model is involved, and say you skipped it. Run it when the design
 lets a model read outside content, search a store, act without a person watching, or reach
 an attached server. Four questions, one rule each, from
-`standards/ai-agent-standards.md`:
+`standards/ai-agent-standards.md`, plus three more when the model can act:
 
 - **Injection through content (SEC-AI-INJ-03).** Where does text from outside the system
   enter a prompt, and what keeps it in a region the instruction part cannot be confused
@@ -71,8 +81,27 @@ an attached server. Four questions, one rule each, from
 - **Tenant separation (SEC-AI-RAG-02).** Is the tenant a condition of the query, or a test
   applied to the results afterwards? Only the first survives a bug in the second.
 - **Autonomy and reach (SEC-AI-MCP-04).** What can a run do with nobody watching, and what
-  is the narrowest scope that still does the job? Separate the permission to RECOMMEND from
-  the permission to ACT, and name which one this design grants.
+  is the narrowest scope that still does the job?
+
+When the model can act, three more, from the "Authority to act" section of the same file:
+
+- **Recommend or act (SEC-AI-AGT-01).** List each kind of CALL the model can make, meaning
+  the operation, its arguments and its target, not just the tool, since one shell or database
+  tool makes both kinds. Mark a call ACT if it has any effect beyond returned text: it changes
+  stored state (a saved draft counts) or live state (restarting a service counts), sends
+  anything outside the system (a search query to an outside provider counts), reads
+  confidential data, or spends money or quota. Mark it RECOMMEND only when its sole effects are
+  a non-confidential read and text a person reads first. When unsure, mark it ACT. Every ACT
+  line needs a reason it is granted at all.
+- **The check before the act (SEC-AI-AGT-02).** For each ACT line, name the check in code that
+  runs first and controls which operation runs on which target: an allowlist of operations and
+  targets, or a person's approval of that operation on that target. A size, count or spend
+  limit can sit beside it but does not count as the check. A sentence in the prompt is not a
+  check.
+- **Who decides it is allowed (SEC-AI-AGT-03).** Trace where "may this run do X" is answered.
+  It must come from the identity running the model and the policy that identity carries. If
+  the answer is the model's own reading of its instructions, that is a Blocker, because an
+  injected document rewrites exactly those instructions.
 
 Each answer that must hold becomes an `NFR-SEC-*` requirement in step 5, exactly like a
 STRIDE or LINDDUN mitigation.

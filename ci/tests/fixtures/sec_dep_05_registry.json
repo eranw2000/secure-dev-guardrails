@@ -1,0 +1,17 @@
+{
+  "_comment": "Canned registry answers for test_sec_dep_05_detections.py. A name absent here is a 404. __error__ means the registry could not answer. The test replaces each placeholder date with the real date five days before the run, so brand-new-lib is always five days old.",
+  "pypi": {
+    "requests": {"releases": {"0.2.0": [{"upload_time_iso_8601": "2011-02-14T08:49:42Z"}],
+                              "2.32.0": [{"upload_time_iso_8601": "2024-05-20T00:00:00Z"}]}},
+    "python-dateutil": {"releases": {"1.4": [{"upload_time_iso_8601": "2003-11-24T00:00:00Z"}]}},
+    "brand-new-lib": {"releases": {"0.0.1": [{"upload_time_iso_8601": "__FIVE_DAYS_AGO__"}]}},
+    "empty-shell": {"releases": {}},
+    "old-lib-new-release": {"releases": {"0.1": [{"upload_time_iso_8601": "2012-06-01T00:00:00Z"}],
+                                         "9.0": [{"upload_time_iso_8601": "__FIVE_DAYS_AGO__"}]}},
+    "flaky-lookup": "__error__"
+  },
+  "npm": {
+    "left-pad": {"time": {"created": "2014-03-14T09:09:20.762Z"}},
+    "@types/node": {"time": {"created": "2016-05-17T00:00:00Z"}}
+  }
+}

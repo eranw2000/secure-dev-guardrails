@@ -261,6 +261,14 @@ appears on none of the ten published lists.
 - CWE: CWE-1395 Dependency on Vulnerable Third-Party Component
 - Note: A KEV listing is evidence of exploitation now, which is a different claim from a severity score, so it overrides the score rather than adding to it.
 
+**SEC-DEP-05**
+
+- SSDF: PW.4.1, PW.4.4
+- OWASP Top 10 2025: A03:2025 Software Supply Chain Failures; A08:2025 Software or Data Integrity Failures
+- CWE: CWE-1357 Reliance on Insufficiently Trustworthy Component; CWE-829 Inclusion of Functionality from Untrusted Control Sphere
+- LLM Top 10 2025: LLM03:2025 Supply Chain; LLM09:2025 Misinformation
+- Note: OWASP LLM09:2025 names this case: a model suggesting non-existent code libraries, which attackers then register.
+
 ## CI and pipeline rules
 
 **SEC-CI-01**

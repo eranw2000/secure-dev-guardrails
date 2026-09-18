@@ -179,6 +179,16 @@ may ask for at once, and whether the same request can take effect twice.
   "unreachable" is a judgement about today's code and the next refactor does not re-check it.
   Confirm the entry actually applies to the version in the lockfile, since a KEV entry names a
   vendor and a product rather than a package on your registry.
+- **SEC-DEP-05 (Blocker):** No package name enters a manifest, a lockfile, an install command or
+  an import until it has been confirmed on the registry it will be installed from, and confirmed
+  to be the project the author meant. A coding assistant writes plausible names for packages that
+  were never published, and attackers publish malicious packages under exactly the names
+  assistants tend to invent, so the install that should have failed succeeds and runs their
+  code. A name that is not on the registry is a Blocker. A name that exists but was first
+  published within the last 90 days, or that is one edit away from a well-known package, is a
+  Question for a person: new packages are often fine, and a new package whose name came from a
+  model is the exact shape of the attack. `ci/check-package-exists.py` asks PyPI and npm
+  directly and exits 2, never 0, when a registry does not answer.
 
 ## Runtime and detection
 
@@ -240,8 +250,8 @@ in the key names.
 Every rule below has exactly one owner. Nothing is left to "somebody will notice". Reviewed
 2026-08-28, when four rules moved from having no owner into the warning hook and the rest were
 assigned explicitly, again on 2026-09-02 when the four CI rules were added with owners in the
-same edit, again on 2026-09-03 for the six authentication rules, and again on 2026-09-16 for
-the six API design rules.
+same edit, again on 2026-09-03 for the six authentication rules, again on 2026-09-16 for
+the six API design rules, and again on 2026-09-18 for SEC-DEP-05.
 
 **Blocked by a hook (2).** `secret-scan.sh` refuses the write.
 
@@ -269,12 +279,15 @@ for the reason recorded in the job's own comment. An accepted action goes in
 
 - SEC-CI-01, SEC-CI-02.
 
-**Owned by the `dependency-review` skill (4).** A manifest change is not a single-line pattern,
+**Owned by the `dependency-review` skill (5).** A manifest change is not a single-line pattern,
 so no hook attempts it. Run the skill when a manifest or lockfile changes. Its step 2b runs
 `ci/check-kev.py` over the advisory ids the SCA tool reported, which is the mechanical half of
-SEC-DEP-04; deciding reachability stays with the reviewer.
+SEC-DEP-04; deciding reachability stays with the reviewer. Its step 1b runs
+`ci/check-package-exists.py` over every added name, which is the review-time half of SEC-DEP-05.
+The write-time half is `claude-security-guidance.md`, which tells the assistant to run the same
+script before it writes a new name, because that is the moment the name is invented.
 
-- SEC-DEP-01, SEC-DEP-02, SEC-DEP-03, SEC-DEP-04.
+- SEC-DEP-01, SEC-DEP-02, SEC-DEP-03, SEC-DEP-04, SEC-DEP-05.
 
 **Owned by the `threat-model` skill (3).** Detection is designed, not noticed, so these are
 asked at step 5b while the system is still on paper and the answers become `NFR-SEC` lines the

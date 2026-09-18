@@ -6,7 +6,7 @@ description: Review the dependencies a branch adds or changes for known CVEs, li
 
 # Dependency / Supply-Chain Review
 
-You check what a change pulls into the supply chain. Anchored to SEC-DEP-01/02/03 in
+You check what a change pulls into the supply chain. Anchored to SEC-DEP-01 to 05 in
 `standards/security-standards.md` and banded per `standards/severity-taxonomy.md`.
 
 ## Inputs
@@ -24,6 +24,21 @@ You check what a change pulls into the supply chain. Anchored to SEC-DEP-01/02/0
 List every added, removed, and version-changed dependency, direct and transitive where the
 lockfile shows it. Separate direct adds (a human chose them) from transitive churn (pulled by a
 direct change).
+
+### 1b. Every added name exists (SEC-DEP-05)
+Run the direct adds from step 1 through the registry check before anything else, because a
+name that was never published has no CVEs, no license and no download count, so every later
+step would report it clean:
+
+```bash
+ci/check-package-exists.py pypi:<name> npm:<name>          # the added names
+ci/check-package-exists.py --requirements requirements.txt --package-json package.json
+```
+
+Exit 1 is a Blocker: the name is not on the registry, which is how an invented name looks
+before an attacker registers it. A name listed as young, or one edit away from a well-known
+package, goes to step 6 as a Question. Exit 2 means a registry did not answer: record the name
+as unconfirmed in the report's Limits section rather than as clean.
 
 ### 2. Known vulnerabilities (SEC-DEP-01)
 Run the SCA tool for each ecosystem present. For each finding, record the advisory ID
@@ -82,6 +97,10 @@ Questions that ask for a human look.
 - CHANGE <name> <old> -> <new>
 - (transitive churn summarized)
 
+## Package names (SEC-DEP-05)
+<"all on the registry", or each name not found, each young name with its first-published
+date, and any name left unconfirmed because a registry did not answer>
+
 ## Known exploited (SEC-DEP-04)
 <CVE, or "none listed", or "not checked: the catalogue was unreachable">
 <for each: CISA due date, ransomware flag, reachable yes/no, and the band that follows>
@@ -101,7 +120,8 @@ Which ecosystems had no SCA tool available, so were checked only by version look
 ```
 
 ### 8. Verdict
-- **BLOCK**: a known-vulnerable dependency on a reachable path with a fix available.
+- **BLOCK**: a known-vulnerable dependency on a reachable path with a fix available, or a
+  name that is not on its registry (SEC-DEP-05).
 - **APPROVE WITH FIXES**: Majors (unpinned, license, non-reachable CVE).
 - **APPROVE**: clean, with the limits section naming any ecosystem not fully scanned.
 

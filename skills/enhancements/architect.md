@@ -32,6 +32,10 @@ STRIDE + LINDDUN produce explicit `NFR-SEC-*` / `NFR-PRIV-*` lines that flow int
 matrix. Provide a per-domain starting point so the model is not blank:
 - Web/API endpoint -> OWASP Top 10 as the STRIDE seed; LINDDUN focus on disclosure + linkability.
 - Data store of personal data -> LINDDUN focus on retention/minimization/transfer compliance.
+- Any database -> the account the service connects with, and a separate migration account
+  (SEC-DB-01).
+- File upload or archive import -> SEC-UPLOAD-01 as the seed: type by content, streaming size
+  cap, generated names, where the file is served from, and safe unpacking.
 - Third-party integration -> transfer (PRIV-XFER) + SSRF (SEC-WEB-03) as the seeds.
 
 ## Change 4: tighten the precondition gate

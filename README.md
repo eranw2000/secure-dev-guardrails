@@ -19,7 +19,7 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
   (PRIV-*, GDPR + CCPA), AI and agent rules (SEC-AI-*)
   for systems where a model reads outside content, the severity taxonomy, the suppression
   baseline, and the two org policy files that the skills here (and any external review plugin
-  you point at them) read. Everything else cites these IDs. `framework-mapping.md` ties all 71
+  you point at them) read. Everything else cites these IDs. `framework-mapping.md` ties all 74
   rules to NIST SSDF, the OWASP Top 10 2025, CWE, the OWASP LLM Top 10 2025, and GDPR/CCPA, so
   a rule can be defended in an audit rather than only asserted.
 - `hooks/`, Claude Code hooks. `secret-scan.sh` and `pii-in-logs.sh` hard-block;
@@ -58,6 +58,13 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
 - Warn / review (hook + skills): injection, weak crypto, disabled TLS, dangerous patterns, and
   the privacy judgment calls (retention, deletion reachability, consent, transfers, subject
   rights).
+- Outgoing requests, uploads and database accounts (hook + semgrep + review): a request value
+  that becomes the URL of an outgoing request (SEC-WEB-03), an archive unpacked with no path
+  filter (SEC-UPLOAD-01), and a database login as the superuser or owner (SEC-DB-01) are
+  reported as they are written. The rest of each rule (address checks, pinning and redirects;
+  content checks, size caps and where uploads are served from; migration and read-only
+  accounts), and SEC-LOG-02 on forged log lines and security-event fields, are settled at
+  review.
 - CI-only (needs a toolchain): SAST across the OWASP packs, SCA for known CVEs, license checks,
   baseline-expiry enforcement.
 - Known exploited (SEC-DEP-04): `dependency-review` step 2b runs `ci/check-kev.py` over the

@@ -400,3 +400,137 @@ rules:
       - metavariable-regex:
           metavariable: $REQ
           regex: ^(req|request|ctx\.request)$
+
+  # --- SEC-WEB-03: a value from the request reaches an outgoing request. Taint mode follows it
+  # through assignments within one function. A call whose name says it allows, validates or
+  # checks the value ends the flow, so a real guard is read by a person rather than reported.
+  - id: SEC-WEB-03-python-request-value-fetched
+    languages: [python]
+    severity: WARNING
+    message: >
+      SEC-WEB-03: a value from the incoming request becomes the URL of an outgoing request. Check
+      the scheme and host, block internal and cloud-metadata addresses, send to the address you
+      checked, refuse or re-check redirects, and cap size and time. See security-standards.md.
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: request.args
+          - pattern: request.form
+          - pattern: request.values
+          - pattern: request.json
+          - pattern: request.get_json(...)
+          - pattern: request.GET
+          - pattern: request.POST
+          - pattern: request.data
+          - pattern: request.query_params
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: requests.$M($URL, ...)
+              - pattern: requests.$M(..., url=$URL, ...)
+              - pattern: requests.request($VERB, $URL, ...)
+              - pattern: httpx.$M($URL, ...)
+              - pattern: httpx.$M(..., url=$URL, ...)
+              - pattern: httpx.request($VERB, $URL, ...)
+              - pattern: urllib.request.urlopen($URL, ...)
+              - pattern: urllib.request.Request($URL, ...)
+          - focus-metavariable: $URL
+    pattern-sanitizers:
+      - patterns:
+          - pattern: $F(...)
+          - metavariable-regex:
+              metavariable: $F
+              regex: (?i).*(allow|validat|check|safe).*
+
+  - id: SEC-WEB-03-js-request-value-fetched
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >
+      SEC-WEB-03: a value from the incoming request becomes the URL of an outgoing request. Check
+      the scheme and host, block internal and cloud-metadata addresses, send to the address you
+      checked, refuse or re-check redirects, and cap size and time. See security-standards.md.
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+              - pattern: $REQ.params
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(req|request|ctx|ctx\.request)$
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: fetch($URL, ...)
+              - pattern: axios($URL, ...)
+              - pattern: axios.$M($URL, ...)
+              - pattern: got($URL, ...)
+              - pattern: got.$M($URL, ...)
+              - pattern: http.get($URL, ...)
+              - pattern: http.request($URL, ...)
+              - pattern: https.get($URL, ...)
+              - pattern: https.request($URL, ...)
+          - focus-metavariable: $URL
+    pattern-sanitizers:
+      - patterns:
+          - pattern: $F(...)
+          - metavariable-regex:
+              metavariable: $F
+              regex: (?i).*(allow|validat|check|safe).*
+
+  # --- SEC-UPLOAD-01: an archive unpacked with no path filter. Python's tarfile follows ../ and
+  # absolute names and links unless filter= says otherwise; filter="fully_trusted" is the same as
+  # none. zipfile strips those names itself, so these rules match tarfile and unpack_archive.
+  - id: SEC-UPLOAD-01-python-tar-extract-no-filter
+    languages: [python]
+    severity: WARNING
+    message: >
+      SEC-UPLOAD-01: a tar archive is unpacked with no path filter, so an entry named ../x or an
+      absolute path, or a link, writes outside the target directory. Pass filter="data" and cap
+      the entry count and unpacked size. See security-standards.md.
+    patterns:
+      - pattern-either:
+          - pattern: $T.extractall(...)
+          - pattern: $T.extract(...)
+      - pattern-either:
+          - pattern-inside: |
+              $T = tarfile.open(...)
+              ...
+          - pattern-inside: |
+              with tarfile.open(...) as $T:
+                ...
+          - pattern-inside: |
+              $T = tarfile.TarFile(...)
+              ...
+          - pattern-inside: |
+              with tarfile.TarFile(...) as $T:
+                ...
+      - pattern-not: $T.extractall(..., filter=$FILTER, ...)
+      - pattern-not: $T.extract(..., filter=$FILTER, ...)
+
+  - id: SEC-UPLOAD-01-python-archive-unpack-no-filter
+    languages: [python]
+    severity: WARNING
+    message: >
+      SEC-UPLOAD-01: an archive is unpacked with no path filter, so an entry named ../x or an
+      absolute path, or a link, writes outside the target directory. Pass filter="data" and cap
+      the entry count and unpacked size. See security-standards.md.
+    patterns:
+      - pattern-either:
+          - pattern: tarfile.open(...).extractall(...)
+          - pattern: shutil.unpack_archive(...)
+      - pattern-not: tarfile.open(...).extractall(..., filter=$FILTER, ...)
+      - pattern-not: shutil.unpack_archive(..., filter=$FILTER, ...)
+
+  - id: SEC-UPLOAD-01-python-archive-fully-trusted
+    languages: [python]
+    severity: WARNING
+    message: >
+      SEC-UPLOAD-01: filter="fully_trusted" unpacks every path and link as written, which is the
+      same as no filter. Use filter="data" for anything that arrived from outside. See
+      security-standards.md.
+    pattern-either:
+      - pattern: $T.extractall(..., filter="fully_trusted", ...)
+      - pattern: $T.extract(..., filter="fully_trusted", ...)
+      - pattern: shutil.unpack_archive(..., filter="fully_trusted", ...)

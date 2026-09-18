@@ -24,7 +24,9 @@ Replace the single "Security" hazard line with a security line and a privacy lin
 
 ```
 - Security: injection (SEC-INJ-*), missing object-level authz (SEC-WEB-02), secrets in code or
-  logs (SEC-SECRET-*, SEC-LOG-01), disabled TLS verification (SEC-CRYPTO-01).
+  logs (SEC-SECRET-*, SEC-LOG-01), user text that can forge a log line (SEC-LOG-02), disabled
+  TLS verification (SEC-CRYPTO-01), an outgoing request to a URL from outside (SEC-WEB-03), an
+  upload or archive handled without SEC-UPLOAD-01, and a superuser database login (SEC-DB-01).
 - Privacy (data flow): trace each new personal-data field from entry to storage to logs to any
   outbound call. Flag PII written to logs/analytics (PRIV-LOG-01), a new personal-data store
   with no reachable deletion path (PRIV-RET-02), personal data sent to an unlisted destination

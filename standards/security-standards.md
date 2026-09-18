@@ -296,6 +296,73 @@ in the key names.
   is substituted into the script before the shell parses it, so the text becomes commands. Bind
   the value to an `env:` variable and reference the variable, which the shell treats as data.
 
+## Containers
+
+An image is a copy of everything the build could see, frozen and shipped to wherever the
+image goes. These rules cover what goes into it and what it may do once it runs. They apply
+to a `Dockerfile`, a compose file and any platform setting that starts a container.
+
+- **SEC-CTR-01 (Blocker):** Nothing secret goes into an image. A `.dockerignore` keeps `.env`
+  files, key files, `.git` and local caches out of the build context, and no secret appears in
+  an `ENV` or `ARG` default or in a `RUN` line. Each of those is stored in a layer, and a layer
+  can be read back by anyone who can pull the image, even after a later step deletes the file.
+  Secrets reach the container at run time, from the platform's secret store or an injected
+  variable. Avoid `COPY . .` without a `.dockerignore`, because it copies whatever happens to be
+  in the directory on the day of the build.
+- **SEC-CTR-02 (Major):** The base image is pinned. Name a specific version tag at the least,
+  and an `@sha256:` digest where the image feeds production, with the readable version in a
+  comment beside it. `latest` or a bare major tag means the next build can run code nobody
+  reviewed, the same reason SEC-CI-01 pins a pipeline action.
+- **SEC-CTR-03 (Major):** The running container gets the least it needs. No privileged mode.
+  Drop the Linux capabilities the service does not use, and set CPU and memory limits so one
+  runaway process cannot take the host down with it. Use a read-only root filesystem where the
+  service writes only to named volumes. Run as a non-root user where the platform allows it.
+  Some platforms mount a persistent volume owned by root with no setting to change that, and
+  there a non-root user breaks every write to the volume. In that case keep root, and record
+  the exception in `baseline.yml` with an owner, so the choice is visible rather than
+  accidental.
+
+## Design review
+
+- **SEC-DES-01 (Major):** A change that touches any of these surfaces gets a threat model
+  before it merges, not after it ships:
+  - authentication, meaning how the system decides who is calling
+  - identity and sessions, including tokens, cookies and password flows
+  - authorization and roles, including cloud IAM policies
+  - cryptography, including hashing, signing and certificate handling
+  - infrastructure and production networking, meaning what the service may reach and who may
+    reach it
+  - an agent or any run that acts with no person watching
+  - a connected server attached to a session or shipped in a product
+  - file upload, meaning bytes a stranger chooses arriving on your disk
+  - command execution reached from input, meaning a shell, a subprocess or an interpreter
+  - deserialization of anything that did not come from you
+
+  Run the `threat-model` skill and carry its mitigations into the plan as numbered
+  requirements. When a change touches none of these, say so in the pull request, because a
+  skipped design review and a design review that found nothing look the same unless somebody
+  writes down which it was.
+
+## Tests that attack the change
+
+- **SEC-TEST-01 (Major):** A change to authentication, authorization, sessions, or any path
+  that accepts input from outside the process ships with at least one test that tries to
+  break it. Name the attack in the test name. The cases worth one test each:
+  - a request with no credentials at all
+  - a signed-in caller reaching another caller's record (SEC-WEB-02)
+  - a caller without the role reaching a role-gated action (SEC-API-01)
+  - a token that is expired, unsigned, or signed by the wrong key (SEC-AUTH-03)
+  - input carrying the syntax of the layer below it, a query or a shell (SEC-INJ-01, SEC-INJ-02)
+  - a path argument climbing out of its directory (SEC-PATH-01)
+  - an input or upload over the size limit, or of a refused file type (SEC-API-04,
+    SEC-UPLOAD-01)
+  - a URL pointing at an internal address, and a redirect to another site (SEC-WEB-03)
+
+  Assert the refusal, never the absence of a crash. A test that only checks the call did not
+  raise passes on a system that let the attack through and returned the data. The assertion
+  is the status code, the exception type, or the empty result, and it is written so that
+  removing the guard makes exactly that test fail.
+
 ## Who checks each rule
 
 Every rule below has exactly one owner. Nothing is left to "somebody will notice". Reviewed
@@ -303,7 +370,7 @@ Every rule below has exactly one owner. Nothing is left to "somebody will notice
 assigned explicitly, again on 2026-09-02 when the four CI rules were added with owners in the
 same edit, again on 2026-09-03 for the six authentication rules, again on 2026-09-16 for
 the six API design rules, again on 2026-09-18 for SEC-DEP-05, and again the same day for
-SEC-UPLOAD-01, SEC-LOG-02 and SEC-DB-01.
+SEC-UPLOAD-01, SEC-LOG-02 and SEC-DB-01, and for SEC-CTR-01 to 03, SEC-DES-01 and SEC-TEST-01.
 
 **Blocked by a hook (2).** `secret-scan.sh` refuses the write.
 
@@ -352,7 +419,7 @@ about the running system and its logging, not about a line of code.
 
 - SEC-RUN-01, SEC-RUN-02, SEC-RUN-03.
 
-**Owned at review (20), each for a stated reason, some with a pattern that assists.** Each is decided by reading how several
+**Owned at review (25), each for a stated reason, some with a pattern that assists.** Each is decided by reading how several
 parts of the code fit together, so they belong to `security-review`, `code-reviewer` and a human.
 
 - SEC-WEB-02, object-level authorization. Whether a route checks that this caller owns this
@@ -429,6 +496,20 @@ parts of the code fit together, so they belong to `security-review`, `code-revie
   depends on the trigger, and a workflow that already routes the value through `env:` reads
   almost identically to one that does not. A pattern match here produces noise, and a check that
   cries wolf gets switched off.
+- SEC-CTR-01, a secret in an image. The leak is usually an absence, a `.dockerignore` that does
+  not list `.env`, so it is settled by reading the ignore file against what the build context
+  holds. `secret-scan.sh` still blocks a literal secret typed into a `Dockerfile`.
+- SEC-CTR-02, an unpinned base image. Settled by reading the `FROM` lines together with which
+  image reaches production, since a digest is required only there.
+- SEC-CTR-03, the runtime surface. Capabilities, limits and the user are often set by the
+  platform or a compose file rather than the `Dockerfile`, and the root exception depends on
+  how the platform mounts its volumes.
+- SEC-DES-01, the design-review trigger. Whether a change touches one of the listed surfaces is
+  a reading of the whole change, and the finding is a threat model that should exist and does
+  not. The reviewer asks for it; the `threat-model` skill is how the author answers.
+- SEC-TEST-01, tests that attack the change. Settled by reading each test against the guard it
+  defends: whether it sends the attack, and whether its assertion goes red with the guard
+  removed.
 
 **What no owner would mean.** A rule with no owner is not a standard, it is a wish. If a rule is
 added below, add it to one of these four groups in the same edit.

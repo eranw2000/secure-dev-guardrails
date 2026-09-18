@@ -28,6 +28,18 @@ Priorities (your organization holds EU + US personal data):
 3. Injection and disabled TLS verification (SEC-INJ-*, SEC-CRYPTO-01), Blockers.
 4. Retention/deletion reachability for new personal-data stores (PRIV-RET-02), Blocker.
 
+Three checks that look at the whole change rather than one line:
+- If the diff touches a surface listed in SEC-DES-01 (authentication, sessions, authorization
+  or IAM, cryptography, infrastructure or networking, an agent, a connected server, file
+  upload, command execution, deserialization), ask for the THREAT-MODEL.md that covers it. Say
+  which surface it touched.
+- If the diff changes authentication, authorization, sessions or an input path, look for a
+  test that attacks it (SEC-TEST-01). The test must assert the refusal: a status code, an
+  exception type or an empty result. A test that only checks nothing crashed does not count.
+- If the diff touches a Dockerfile, compose file or container setting, check SEC-CTR-01 to 03:
+  nothing secret in the image or its build context, a pinned base image, and the least the
+  running container needs.
+
 Raise cross-file concerns you cannot confirm from the diff as Questions, not assertions. Do not
 claim the PR is secure or compliant; report what you checked.
 ```

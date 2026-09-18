@@ -1,13 +1,15 @@
 # AI and Agent Security Standards
 
-The rules for the part of the system a model reads. Companion to `security-standards.md`,
-same shape: a stable ID (`SEC-AI-*`) that a finding anchors to, a band from
-`severity-taxonomy.md`, and exactly one named owner per rule at the bottom.
+The rules for the part of the system a model reads or acts through. Companion to
+`security-standards.md`, same shape: a stable ID (`SEC-AI-*`) that a finding anchors to, a band
+from `severity-taxonomy.md`, and exactly one named owner per rule at the bottom.
 
-Three subjects. They apply to any product that reads outside content: a service that pulls
-documents, web pages or transcripts into a store a model then reads; a session with attached
-servers; any feature that turns somebody else's file into text a model treats as its working
-material. Treat them as live rather than theoretical the moment one of those is in the design.
+Six subjects. The first three apply to any product that reads outside content: a service that
+pulls documents, web pages or transcripts into a store a model then reads; a session with
+attached servers; any feature that turns somebody else's file into text a model treats as its
+working material. Treat them as live rather than theoretical the moment one of those is in the
+design. The last three apply wherever a model can act: what it may do alone, which commands it
+may run, and what always waits for a person.
 
 ## Untrusted content is data, never instructions
 
@@ -64,17 +66,79 @@ material. Treat them as live rather than theoretical the moment one of those is 
 - **SEC-AI-MCP-04 (Major):** A server's reach is the session's reach. Grant the narrowest scope
   that does the job, and re-read the scope when the server updates.
 
+## Authority to act
+
+A model that can call tools can do things, not just say things. These rules decide what it may
+do on its own. They apply to a product that lets a model act, and to a coding assistant working
+in your repository, which is the same thing pointed at your own systems.
+
+- **SEC-AI-AGT-01 (Blocker):** Keep the permission to recommend apart from the authority to act.
+  A design says, for each tool a model can call, which of the two it grants. Reading, searching
+  and drafting are recommendations. Deleting data, changing access or IAM, touching production,
+  rotating a secret, sending a message outside the organisation and moving money are acts, and
+  none of them is granted by default.
+- **SEC-AI-AGT-02 (Blocker):** A high-impact act passes a fixed check in code before it runs: an
+  allowlist of operations and targets, a limit, or a person's approval, decided by something
+  other than the model. A prompt that says "only delete test data" is a wish. A function that
+  refuses any target outside the test schema is a control.
+- **SEC-AI-AGT-03 (Blocker):** The model is never the only judge of whether its own action is
+  allowed. When the question is "may this run do X", the answer comes from the identity running
+  it and the policy that identity carries, never from the model's reading of its instructions,
+  because the instructions are exactly what an injected document rewrites (SEC-AI-INJ-01).
+- **SEC-AI-AGT-04 (Blocker):** An agent never edits its own permissions: the settings file that
+  lists what it may run, a hook that guards it, a rule file it is bound by, or a scanner's
+  configuration. Widening a guard is a decision for a person, made outside the run it would
+  widen. When a run is blocked, it stops and says what it needs and why.
+
+## Commands an agent runs
+
+An assistant with a shell runs commands on a real machine, with the developer's credentials.
+The question before each one is what it can change and whether that change can be undone.
+
+- **SEC-AI-CMD-01 (Major):** Before running a command, know what it can modify and whether the
+  change can be undone. Prefer reading to writing and a reversible step to a final one. Say
+  what a destructive command will destroy before running it, never after: a recursive delete,
+  dropping a database, rewriting git history, a force push, discarding uncommitted work, or
+  changing live infrastructure. Uncommitted work is the case people forget, because no backup
+  holds it.
+- **SEC-AI-CMD-02 (Major):** Know whether a command reaches the network, installs software, or
+  runs code it downloaded. Each one brings outside code or outside hosts into the session. Piping
+  a download straight into a shell runs code nobody read. A package installed to see whether a
+  name exists runs that package's install script (SEC-DEP-05).
+- **SEC-AI-CMD-03 (Blocker):** Never route around a permission prompt or a guard. Do not split a
+  refused command into pieces that each pass, reword it so the guard stops matching, move it
+  into a script the guard does not read, or set the variable that switches the guard off. A
+  refusal is information for the person. Stop and bring it to them.
+
+## What is never done without a person
+
+- **SEC-AI-STOP-01 (Blocker):** Nine operations are never carried out by a run on its own, even
+  when one would unblock the task. Name the operation and its effect, and let a person decide:
+  - deleting production data
+  - switching off authentication
+  - bypassing an authorization check
+  - exposing a secret, in output, a log, a file or a message
+  - switching off certificate checking in production
+  - switching off a security scan or a guard
+  - granting broad administrative access
+  - exposing a private service to the public internet
+  - destroying infrastructure
+
+  This list is a floor, not a menu. An operation missing from it is not thereby allowed, and
+  SEC-AI-AGT-02 still applies to it.
+
 ## Who checks each rule
 
 Every rule has exactly one owner, on the same footing as `security-standards.md`. A rule with
 no owner is not a standard, it is a wish.
 
-**Owned by the always-loaded guidance (3).** These govern how Claude itself treats what it
-reads, so they are enforced by being read on every call. The text lives in the "AI and agent
-code" section of `claude-security-guidance.md`; place that file at the tier your review
-plugin documents, or paste the section into the team's `CLAUDE.md`.
+**Owned by the always-loaded guidance (8).** These govern how Claude itself treats what it
+reads and what it runs, so they are enforced by being read on every call. The text lives in
+the "AI and agent code" section of `claude-security-guidance.md`; place that file at the tier
+your review plugin documents, or paste the section into the team's `CLAUDE.md`.
 
 - SEC-AI-INJ-01, SEC-AI-INJ-02, SEC-AI-MCP-02.
+- SEC-AI-AGT-04, SEC-AI-CMD-01, SEC-AI-CMD-02, SEC-AI-CMD-03, SEC-AI-STOP-01.
 
 **Context added by a hook (2).** `sensitive-file-context.sh` recognises a server
 configuration path (`.mcp.json`, `claude.json`, a desktop config) and prints these rules
@@ -87,10 +151,11 @@ attaches a server without any file edit, so the hook produces nothing. A server 
 that way is covered by a human reading these two rules, and by nothing else. Treat the hook
 as a reminder on one route in, never as coverage of the subject.
 
-**Owned by the `threat-model` skill (4).** These are design-time questions with no single line
+**Owned by the `threat-model` skill (7).** These are design-time questions with no single line
 to match, and the skill's own AI pass asks each one before the code exists.
 
 - SEC-AI-INJ-03, SEC-AI-RAG-01, SEC-AI-RAG-02, SEC-AI-MCP-04.
+- SEC-AI-AGT-01, SEC-AI-AGT-02, SEC-AI-AGT-03.
 
 SEC-AI-MCP-04 sits here and nowhere else, including when a server is added to a shipped
 product long after the design. Adding one is a design decision arriving late, so it goes

@@ -302,25 +302,39 @@ An image is a copy of everything the build could see, frozen and shipped to wher
 image goes. These rules cover what goes into it and what it may do once it runs. They apply
 to a `Dockerfile`, a compose file and any platform setting that starts a container.
 
-- **SEC-CTR-01 (Blocker):** Nothing secret goes into an image. A `.dockerignore` keeps `.env`
-  files, key files, `.git` and local caches out of the build context, and no secret appears in
-  an `ENV` or `ARG` default or in a `RUN` line. Each of those is stored in a layer, and a layer
-  can be read back by anyone who can pull the image, even after a later step deletes the file.
-  Secrets reach the container at run time, from the platform's secret store or an injected
-  variable. Avoid `COPY . .` without a `.dockerignore`, because it copies whatever happens to be
-  in the directory on the day of the build.
-- **SEC-CTR-02 (Major):** The base image is pinned. Name a specific version tag at the least,
-  and an `@sha256:` digest where the image feeds production, with the readable version in a
-  comment beside it. `latest` or a bare major tag means the next build can run code nobody
-  reviewed, the same reason SEC-CI-01 pins a pipeline action.
-- **SEC-CTR-03 (Major):** The running container gets the least it needs. No privileged mode.
-  Drop the Linux capabilities the service does not use, and set CPU and memory limits so one
-  runaway process cannot take the host down with it. Use a read-only root filesystem where the
-  service writes only to named volumes. Run as a non-root user where the platform allows it.
-  Some platforms mount a persistent volume owned by root with no setting to change that, and
-  there a non-root user breaks every write to the volume. In that case keep root, and record
-  the exception in `baseline.yml` with an owner, so the choice is visible rather than
-  accidental.
+- **SEC-CTR-01 (Blocker):** Nothing secret goes into an image. Three routes, each closed
+  separately:
+  - The build context. A `.dockerignore` protects only the paths it lists, so list them: `.env`
+    files, key files, `.git` and local caches. `COPY . .` without that file copies whatever is
+    in the directory on the day of the build.
+  - Build instructions. A secret in an `ENV` value is stored in the image configuration, and
+    anyone who pulls the image can read it. A secret passed as an `ARG` can show up in the
+    image history and the build provenance. A secret a `RUN` step writes to a file stays in
+    that layer even when a later step deletes the file.
+  - Build-time needs. A build that genuinely needs a secret, such as a token for a private
+    package index, reads it through a BuildKit secret mount (`RUN --mount=type=secret,...`),
+    which exists only for that one step and is not stored in the image or the cache.
+
+  Secrets the running service needs reach it at run time, from the platform's secret store or
+  an injected variable.
+- **SEC-CTR-02 (Major):** A base image that feeds production is pinned by digest (`@sha256:`),
+  with the readable version in a comment beside it. A tag is a moving reference, a patch
+  version tag included: whoever controls the registry can point it at a different image, and
+  the next build runs code nobody reviewed. That is the same reason SEC-CI-01 pins a pipeline
+  action. A tag is fine for a local development image. When you bump the pin, change the digest
+  and the comment in the same edit.
+- **SEC-CTR-03 (Major):** The running container gets the least it needs:
+  - No privileged mode.
+  - Drop all Linux capabilities, then add back only the ones the service uses.
+  - Set CPU and memory limits, so one runaway process cannot take the host down with it.
+  - Use a read-only root filesystem, with the paths the service writes to mounted as named
+    volumes or `tmpfs`.
+  - Run as a non-root user. When a mounted volume is owned by root, fix the ownership rather
+    than the user: set the volume's owner or group (`fsGroup` in Kubernetes), add the user to
+    a group that can write it, or run a start step that fixes ownership and then drops to the
+    non-root user. Keep the service running as root only when the platform offers none of
+    these, and then record the exception in `baseline.yml` with an owner, so the choice is
+    visible rather than accidental.
 
 ## Design review
 
@@ -346,8 +360,8 @@ to a `Dockerfile`, a compose file and any platform setting that starts a contain
 ## Tests that attack the change
 
 - **SEC-TEST-01 (Major):** A change to authentication, authorization, sessions, or any path
-  that accepts input from outside the process ships with at least one test that tries to
-  break it. Name the attack in the test name. The cases worth one test each:
+  that accepts input from outside the process ships with a test that tries to break it, one
+  for each case below that the change touches. Name the attack in the test name.
   - a request with no credentials at all
   - a signed-in caller reaching another caller's record (SEC-WEB-02)
   - a caller without the role reaching a role-gated action (SEC-API-01)
@@ -356,12 +370,15 @@ to a `Dockerfile`, a compose file and any platform setting that starts a contain
   - a path argument climbing out of its directory (SEC-PATH-01)
   - an input or upload over the size limit, or of a refused file type (SEC-API-04,
     SEC-UPLOAD-01)
-  - a URL pointing at an internal address, and a redirect to another site (SEC-WEB-03)
+  - a URL pointing at an internal address, and a redirect whose target is an internal address
+    (SEC-WEB-03)
 
-  Assert the refusal, never the absence of a crash. A test that only checks the call did not
-  raise passes on a system that let the attack through and returned the data. The assertion
-  is the status code, the exception type, or the empty result, and it is written so that
-  removing the guard makes exactly that test fail.
+  Assert the refusal, never the absence of a crash. The assertion is a rejected status code or
+  exception, and no protected data in the response. For a write (create, update, delete, send),
+  also read the protected state back and assert it did not change, and that no side effect
+  such as a message or a payment happened: a delete that ran and returned an empty body looks
+  exactly like one that was refused. Write each assertion so that removing the guard makes
+  exactly that test fail.
 
 ## Who checks each rule
 
@@ -498,9 +515,11 @@ parts of the code fit together, so they belong to `security-review`, `code-revie
   cries wolf gets switched off.
 - SEC-CTR-01, a secret in an image. The leak is usually an absence, a `.dockerignore` that does
   not list `.env`, so it is settled by reading the ignore file against what the build context
-  holds. `secret-scan.sh` still blocks a literal secret typed into a `Dockerfile`.
+  holds. `secret-scan.sh` blocks a secret written into a `Dockerfile` when it matches the hook's
+  token signatures or its `NAME=value` assignment pattern, such as `ENV API_KEY=...`, and the
+  reviewer reads the other shapes.
 - SEC-CTR-02, an unpinned base image. Settled by reading the `FROM` lines together with which
-  image reaches production, since a digest is required only there.
+  image reaches production, since the digest is required only there.
 - SEC-CTR-03, the runtime surface. Capabilities, limits and the user are often set by the
   platform or a compose file rather than the `Dockerfile`, and the root exception depends on
   how the platform mounts its volumes.

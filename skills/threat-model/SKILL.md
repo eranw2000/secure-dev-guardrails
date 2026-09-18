@@ -85,10 +85,11 @@ an attached server. Four questions, one rule each, from
 
 When the model can act, three more, from the "Authority to act" section of the same file:
 
-- **Recommend or act (SEC-AI-AGT-01).** List each tool the model can call and mark it
-  RECOMMEND (read, search, draft) or ACT (delete, change access, touch production, rotate a
-  secret, send outside the organisation, move money). Every ACT line needs a reason it is
-  granted at all.
+- **Recommend or act (SEC-AI-AGT-01).** List each tool the model can call and mark it ACT or
+  RECOMMEND by what the call does, not by its name. It is an ACT if it changes stored state
+  (a saved draft and a written file count), sends anything outside the system (a search query
+  to an outside provider counts), reads confidential data, spends money or quota, or cannot be
+  undone. Everything else is RECOMMEND. Every ACT line needs a reason it is granted at all.
 - **The check before the act (SEC-AI-AGT-02).** For each ACT line, name the check in code
   that runs first: an allowlist of operations and targets, a limit, or a person's approval.
   A sentence in the prompt is not a check.

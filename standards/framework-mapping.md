@@ -313,14 +313,14 @@ appears on none of the ten published lists.
 
 - SSDF: PW.1.1
 - OWASP Top 10 2025: not applicable. This rule cites no CWE to derive one from.
-- CWE: none. This rule is a legal or process obligation, not a code weakness.
+- CWE: none. This rule is a process or conduct requirement, not a code weakness.
 - Note: A practice rule rather than a weakness, so it cites the SSDF task and no CWE.
 
 **SEC-TEST-01**
 
 - SSDF: PW.8.2
 - OWASP Top 10 2025: not applicable. This rule cites no CWE to derive one from.
-- CWE: none. This rule is a legal or process obligation, not a code weakness.
+- CWE: none. This rule is a process or conduct requirement, not a code weakness.
 - Note: A practice rule rather than a weakness. Each case in its list cites the rule it tests, and those rules carry the CWEs.
 
 ## CI and pipeline rules
@@ -560,7 +560,7 @@ appears on none of the ten published lists.
 
 - SSDF: PS.3.2, PW.1.2
 - OWASP Top 10 2025: not applicable. This rule cites no CWE to derive one from.
-- CWE: none. This rule is a legal or process obligation, not a code weakness.
+- CWE: none. This rule is a process or conduct requirement, not a code weakness.
 - LLM Top 10 2025: LLM08:2025 Vector and Embedding Weaknesses
 
 **SEC-AI-MCP-01**
@@ -615,18 +615,19 @@ appears on none of the ten published lists.
 
 **SEC-AI-AGT-04**
 
-- SSDF: PO.5.1, PW.1.1
+- SSDF: PO.5.2, PW.1.1
 - OWASP Top 10 2025: A06:2025 Insecure Design
 - CWE: CWE-269 Improper Privilege Management
 - LLM Top 10 2025: LLM06:2025 Excessive Agency
+- Note: PO.5.2 because the permission settings an agent could widen are part of hardening the development endpoint it runs on.
 
 **SEC-AI-CMD-01**
 
-- SSDF: PO.5.1
+- SSDF: PO.5.2
 - OWASP Top 10 2025: not applicable. This rule cites no CWE to derive one from.
-- CWE: none. This rule is a legal or process obligation, not a code weakness.
+- CWE: none. This rule is a process or conduct requirement, not a code weakness.
 - LLM Top 10 2025: LLM06:2025 Excessive Agency
-- Note: A practice rule about the agent's own conduct, so it cites no CWE.
+- Note: A rule about the agent's own conduct on a development endpoint, which PO.5.2 asks to secure, so it cites no CWE.
 
 **SEC-AI-CMD-02**
 
@@ -637,19 +638,19 @@ appears on none of the ten published lists.
 
 **SEC-AI-CMD-03**
 
-- SSDF: PO.5.1
+- SSDF: PO.5.2
 - OWASP Top 10 2025: not applicable. This rule cites no CWE to derive one from.
-- CWE: none. This rule is a legal or process obligation, not a code weakness.
+- CWE: none. This rule is a process or conduct requirement, not a code weakness.
 - LLM Top 10 2025: LLM06:2025 Excessive Agency
-- Note: A practice rule about the agent's own conduct, so it cites no CWE.
+- Note: A rule about the agent's own conduct on a development endpoint, which PO.5.2 asks to secure, so it cites no CWE.
 
 **SEC-AI-STOP-01**
 
-- SSDF: PO.5.1, PW.1.1
+- SSDF: PO.2.1
 - OWASP Top 10 2025: not applicable. This rule cites no CWE to derive one from.
-- CWE: none. This rule is a legal or process obligation, not a code weakness.
+- CWE: none. This rule is a process or conduct requirement, not a code weakness.
 - LLM Top 10 2025: LLM06:2025 Excessive Agency
-- Note: Excessive Agency is exactly the risk a human stop addresses. The nine operations each map to weaknesses covered by their own rules.
+- Note: PO.2.1 because the rule assigns a responsibility: who may approve each operation. Excessive Agency is the risk a human stop addresses. The nine operations each map to weaknesses covered by their own rules.
 
 ## Sources, each read on 2026-09-02
 

@@ -58,19 +58,24 @@ You can run commands and call tools, so these hold on every call too. Full text 
    a dropped database, rewritten git history, a force push, discarded uncommitted work, a
    change to live infrastructure.
 2. **SEC-AI-CMD-02.** Know whether a command reaches the network, installs software, or runs
-   code it downloaded. Never pipe a download into a shell, and never install a package to find
-   out whether its name exists.
+   code it downloaded. Never pipe a download into a shell. Before downloaded code runs, check
+   where it came from and that it arrived intact (a published checksum or signature, or a
+   pinned registry version). Never install a package to find out whether its name exists.
 3. **SEC-AI-CMD-03.** Never route around a permission prompt or a guard: no splitting a refused
    command into pieces, no rewording it until the guard stops matching, no moving it into a
    script the guard does not read, no switching the guard off. Stop and tell the developer.
 4. **SEC-AI-AGT-04.** Never edit your own permissions: the settings that list what you may
    run, a hook that guards you, a rule file you are bound by, or a scanner's configuration.
 5. **SEC-AI-STOP-01.** These nine wait for a person, even when one would unblock the task:
-   deleting production data, switching off authentication, bypassing an authorization check,
-   exposing a secret, switching off certificate checking in production, switching off a
-   security scan or a guard, granting broad administrative access, exposing a private service
-   to the public internet, and destroying infrastructure. Name the operation and its effect,
-   and let the developer decide.
+   deleting production data, switching off authentication, going around an authorization check
+   in a real environment, exposing a secret, switching off certificate checking in production,
+   switching off a security scan or a guard, granting broad administrative access, exposing a
+   private service to the public internet, and destroying infrastructure that production or
+   other people rely on. A person decides only when somebody with authority over that system
+   approves after seeing the exact operation, its target, the environment and what cannot be
+   undone. The original request and a standing instruction do not count. Saying what will
+   happen and going ahead is not approval: stop and wait for the yes. This list is a floor,
+   not a menu: an operation missing from it is not thereby allowed.
 
 ## Package names you write (SEC-DEP-05)
 

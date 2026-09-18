@@ -73,11 +73,17 @@ do on its own. They apply to a product that lets a model act, and to a coding as
 in your repository, which is the same thing pointed at your own systems.
 
 - **SEC-AI-AGT-01 (Blocker):** Keep the permission to recommend apart from the authority to act.
-  A design says, for each tool a model can call, which of the two it grants. Reading, searching
-  and drafting are recommendations. Deleting data, changing access or IAM, touching production,
-  rotating a secret, sending a message outside the organisation and moving money are acts, and
-  none of them is granted by default.
-- **SEC-AI-AGT-02 (Blocker):** A high-impact act passes a fixed check in code before it runs: an
+  A design marks each tool a model can call as one or the other, by what the call does rather
+  than by its name. A call is an ACT when it does any of these:
+  - changes stored state, including writing a file, saving a draft, or updating a record
+  - sends anything outside the system, including a search query to an outside provider
+  - reads confidential data, such as a production database, a private mailbox or personal data
+  - spends money or a paid quota
+  - cannot be undone
+
+  What remains is a RECOMMENDATION: reading data that is not confidential, and producing text
+  that a person reads before anything happens. No ACT is granted by default.
+- **SEC-AI-AGT-02 (Blocker):** Every ACT passes a fixed check in code before it runs: an
   allowlist of operations and targets, a limit, or a person's approval, decided by something
   other than the model. A prompt that says "only delete test data" is a wish. A function that
   refuses any target outside the test schema is a control.
@@ -102,9 +108,11 @@ The question before each one is what it can change and whether that change can b
   changing live infrastructure. Uncommitted work is the case people forget, because no backup
   holds it.
 - **SEC-AI-CMD-02 (Major):** Know whether a command reaches the network, installs software, or
-  runs code it downloaded. Each one brings outside code or outside hosts into the session. Piping
-  a download straight into a shell runs code nobody read. A package installed to see whether a
-  name exists runs that package's install script (SEC-DEP-05).
+  runs code it downloaded. Each one brings outside code or outside hosts into the session.
+  Never pipe a download into a shell. Before downloaded code runs, check where it came from and
+  that it arrived intact: a checksum or signature published by its maker, or a pinned version
+  from a package registry. Never install a package to find out whether its name exists, because
+  installing runs that package's install script (SEC-DEP-05).
 - **SEC-AI-CMD-03 (Blocker):** Never route around a permission prompt or a guard. Do not split a
   refused command into pieces that each pass, reword it so the guard stops matching, move it
   into a script the guard does not read, or set the variable that switches the guard off. A
@@ -113,19 +121,26 @@ The question before each one is what it can change and whether that change can b
 ## What is never done without a person
 
 - **SEC-AI-STOP-01 (Blocker):** Nine operations are never carried out by a run on its own, even
-  when one would unblock the task. Name the operation and its effect, and let a person decide:
+  when one would unblock the task:
   - deleting production data
   - switching off authentication
-  - bypassing an authorization check
+  - going around an authorization check in a real environment
   - exposing a secret, in output, a log, a file or a message
   - switching off certificate checking in production
   - switching off a security scan or a guard
   - granting broad administrative access
   - exposing a private service to the public internet
-  - destroying infrastructure
+  - destroying infrastructure that production or other people rely on
 
-  This list is a floor, not a menu. An operation missing from it is not thereby allowed, and
-  SEC-AI-AGT-02 still applies to it.
+  What counts as a person deciding: somebody with authority over that system approves after
+  being shown the exact operation, its target, the environment, and what cannot be undone. A
+  request at the start of the task does not count, and neither does a standing instruction,
+  because neither was given with the target in view. Saying what will happen and then going
+  ahead is not approval: stop and wait for the yes.
+
+  An authorised test that attempts a bypass against a test system, without switching the
+  control off, is not on the list. This list is a floor, not a menu: an operation missing from
+  it is not thereby allowed, and SEC-AI-AGT-02 still applies to it.
 
 ## Who checks each rule
 
@@ -133,9 +148,11 @@ Every rule has exactly one owner, on the same footing as `security-standards.md`
 no owner is not a standard, it is a wish.
 
 **Owned by the always-loaded guidance (8).** These govern how Claude itself treats what it
-reads and what it runs, so they are enforced by being read on every call. The text lives in
-the "AI and agent code" section of `claude-security-guidance.md`; place that file at the tier
-your review plugin documents, or paste the section into the team's `CLAUDE.md`.
+reads and what it runs, so the owner is the guidance Claude reads on every call. The text
+lives in the "AI and agent code" and "Commands you run and actions you take" sections of
+`claude-security-guidance.md`; place that file at the tier your review plugin documents, or
+paste those sections into the team's `CLAUDE.md`. They apply from the moment the file is
+installed there.
 
 - SEC-AI-INJ-01, SEC-AI-INJ-02, SEC-AI-MCP-02.
 - SEC-AI-AGT-04, SEC-AI-CMD-01, SEC-AI-CMD-02, SEC-AI-CMD-03, SEC-AI-STOP-01.

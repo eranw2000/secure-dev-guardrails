@@ -1,7 +1,7 @@
 # Severity Taxonomy
 
 Every finding from every ring (hooks, skills, CI) uses these four bands. The bands match
-the ones `spec-review` already emits, so a developer sees one consistent vocabulary whether
+the ones a spec review skill typically emits, so a developer sees one consistent vocabulary whether
 the finding came from a local hook, a review skill, or a CI job.
 
 ## Bands
@@ -55,7 +55,7 @@ Every tool emits findings in this shape so they aggregate cleanly:
 
 `RULE-ID` is one of the IDs defined in `security-standards.md` (SEC-*) or
 `privacy-standards.md` (PRIV-*), or a requirement ID (`NFR-SEC-*`, `NFR-PRIV-*`) when the
-finding comes from `spec-review` or `architect`.
+finding comes from a spec review or `architect`.
 
 ## Mapping to CVSS / regulatory weight
 

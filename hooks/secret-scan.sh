@@ -138,8 +138,9 @@ case "$TOOL" in
     #     a push's secret can be in a committed-but-unpushed commit while the index is
     #     empty, which the old single `--staged` scan reported as clean.
     #
-    # The interpreter: SECRET_SCAN_PYTHON when set, else /usr/bin/python3, else the
-    # python3 on PATH. The Python hook is run, not exec'd, so its status can be read:
+    # The interpreter: SECRET_SCAN_PYTHON when set, else the python3 on PATH, else
+    # /usr/bin/python3. PATH comes first so a working Homebrew or venv python wins
+    # over a system stub that only asks to install developer tools. The Python hook is run, not exec'd, so its status can be read:
     # 0 allows, 2 blocks, and ANYTHING else (a crash, a missing or stub interpreter)
     # blocks too, because it means no verdict. The here-string avoids a pipe, whose
     # status would be the last stage's rather than the work's.
@@ -148,10 +149,9 @@ case "$TOOL" in
     if [ -f "$PY_HOOK" ]; then
       PY="${SECRET_SCAN_PYTHON:-}"
       if [ -z "$PY" ]; then
-        if [ -x /usr/bin/python3 ]; then
+        PY=$(command -v python3 2>/dev/null || true)
+        if [ -z "$PY" ] && [ -x /usr/bin/python3 ]; then
           PY=/usr/bin/python3
-        else
-          PY=$(command -v python3 2>/dev/null || true)
         fi
       fi
       if [ -z "$PY" ]; then

@@ -164,9 +164,11 @@ PUSH_DELETE_FLAGS = {"--delete", "-d"}
 # Env-var prefixes that move the repository somewhere this parse does not follow.
 GIT_ENV_TARGETS = ("GIT_DIR=", "GIT_WORK_TREE=", "GIT_COMMON_DIR=")
 
-# The raw-text fallback for a command the tokenizer cannot read. Same shape as the
-# push guard's, so the two guards fail closed on the same inputs.
-LOOKS_LIKE_GIT_RE = re.compile(r"\bgit\b[^\n]{0,80}\b(commit|push)\b")
+# The raw-text fallback for a command nothing could parse. Same shape as the push
+# guard's, so the two guards fail closed on the same inputs. No distance cap and it
+# crosses newlines, so a long option value or a continued line still matches. It
+# runs only when the parse already failed.
+LOOKS_LIKE_GIT_RE = re.compile(r"\bgit\b[\s\S]*?\b(commit|push)\b")
 
 
 # -------------------------------------------------------- field redaction (S1)
@@ -438,6 +440,16 @@ def _git_calls(command, cwd, wanted):
 
     def walk(text, here, depth=0):
         if depth > 3:
+            # Out of nesting budget with text still to run. Unknown is not clean.
+            for m in LOOKS_LIKE_GIT_RE.finditer(text):
+                if m.group(1) in wanted:
+                    out.append({
+                        "subcommand": m.group(1),
+                        "repo": None,
+                        "args": [],
+                        "shape": "a git %s nested deeper than this scan follows" % m.group(1),
+                    })
+                    break
             return here
         # ONE tokenize of the whole text, not one per line. The tokenizer already
         # emits a newline as its own operator token and split_segments already

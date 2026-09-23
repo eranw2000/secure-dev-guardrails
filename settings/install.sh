@@ -25,10 +25,10 @@ esac
 MANAGED_DIR="${SDG_MANAGED_DIR:-$MANAGED_DIR}"
 MANAGED_FILE="$MANAGED_DIR/managed-settings.json"
 
-# The interpreter the secret-scan hook will pick: /usr/bin/python3 if present, else
-# the python3 on PATH. Checked here with the same rule, and it must actually run.
+# The interpreter the secret-scan hook will pick: the python3 on PATH, else
+# /usr/bin/python3. Checked here with the same rule, and it must actually run.
 hook_python() {
-  if [ -x /usr/bin/python3 ]; then echo /usr/bin/python3; else command -v python3 2>/dev/null || true; fi
+  command -v python3 2>/dev/null || { [ -x /usr/bin/python3 ] && echo /usr/bin/python3; } || true
 }
 
 # Everything the hooks need, checked BEFORE anything is copied or activated, so a

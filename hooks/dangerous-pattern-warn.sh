@@ -20,14 +20,24 @@ FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // ""')
 [ -z "$FILE_PATH" ] && exit 0
 [ -f "$FILE_PATH" ] || exit 0
 
-# Only scan code we have rules for.
+# Only scan code we have rules for. Shell scripts joined on 2026-09-11: until then a .sh file
+# was never scanned at all, so the SEC-SECRET-03 rule below could not see the language where
+# a credential on a command line is most often written.
 case "$FILE_PATH" in
-  *.py|*.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs|*.java|*.cs) : ;;
+  *.py|*.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs|*.java|*.cs|*.sh|*.bash) : ;;
   *) exit 0 ;;
 esac
 
 FINDINGS=""
 add() { FINDINGS="${FINDINGS}\n  [$1] $2"; }
+
+IS_SHELL=0
+case "$FILE_PATH" in *.sh|*.bash) IS_SHELL=1 ;; esac
+
+# The code-language rules below were written and measured for code files. A shell script only
+# gets its own rule, in the case block further down: run over this hook's OWN file on the day
+# shell joined, the cross-language greps fired four times on nothing but their pattern text.
+if [ "$IS_SHELL" != 1 ]; then
 
 # --- cross-language ---
 # A bare `verify=False` is a TLS switch on an HTTP call and a token switch on a decode call, and
@@ -83,6 +93,8 @@ grep -Eqn 'tempfile\.mktemp[[:space:]]*\(|os\.chmod[^)]*0o?777|chmod[[:space:]]+
 # --- not a word in a sentence, which is the mistake pii-in-logs made and had to be fixed for.
 grep -Eqn '(logger?|logging|console|print|printf|System\.out)[[:space:]]*[.(].*[(,{=][[:space:]]*[A-Za-z_.]*(token|secret|password|passwd|api_key|apikey|credential)[[:space:]]*[),}]' "$FILE_PATH" \
   && add "SEC-LOG-01" "a credential-shaped variable passed to a log call"
+
+fi
 
 case "$FILE_PATH" in
   *.py)
@@ -203,6 +215,19 @@ case "$FILE_PATH" in
       && add "SEC-INJ-02/03" "native deserialization / Runtime.exec / ProcessBuilder with concatenation"
     grep -Eqn 'createStatement[[:space:]]*\([[:space:]]*\)|executeQuery[[:space:]]*\([^)]*\+|"SELECT .*"[[:space:]]*\+' "$FILE_PATH" \
       && add "SEC-INJ-01" "SQL via Statement with string concatenation (use PreparedStatement)"
+    ;;
+  *.sh|*.bash)
+    # SEC-SECRET-03 in shell: a credential-named VARIABLE handed to an external command as an
+    # argument, e.g. `python3 check.py "$BASE" "$LINK_KEY"` or `curl -H "Bearer $TOKEN"`.
+    # Anything in argv is readable by `ps` for the whole run. The flag-name rule above cannot
+    # see this, because the secret is a positional argument with no --password in sight.
+    # Seen on three real projects in two weeks: a settings tool, a git -c http.extraHeader,
+    # and two test scripts whose own header comment said the key never went on a command line;
+    # both reviewers caught it, this hook ran on every edit and was silent because it skipped
+    # .sh files outright.
+    # Line-based and deliberately narrow; what it treats as SAFE is the list in the code.
+    SHELL_HITS=$(python3 "$(dirname "$0")/_shell_secret_argv.py" "$FILE_PATH" 2>/dev/null)
+    [ -n "$SHELL_HITS" ] && add "SEC-SECRET-03" "a credential-named variable passed as a command argument (line ${SHELL_HITS}); argv is readable by ps, so pipe it on stdin (printf is a builtin) or write it to a mode-600 file"
     ;;
 esac
 

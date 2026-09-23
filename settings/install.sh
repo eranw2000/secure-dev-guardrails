@@ -28,9 +28,12 @@ verify() {
   for h in secret-scan.sh pii-in-logs.sh sensitive-file-context.sh dangerous-pattern-warn.sh; do
     if [ -x "$GUARDRAILS_HOME/hooks/$h" ]; then echo "  ok   hook $h"; else echo "  MISS hook $h"; ok=1; fi
   done
+  for h in secret-scan-git.py _bash_command_parse.py _bash_write_targets.py _pii_bash_lines.py _shell_secret_argv.py; do
+    if [ -f "$GUARDRAILS_HOME/hooks/$h" ]; then echo "  ok   helper $h"; else echo "  MISS helper $h"; ok=1; fi
+  done
   if [ -f "$MANAGED_FILE" ]; then echo "  ok   managed settings at $MANAGED_FILE"; else echo "  MISS managed settings at $MANAGED_FILE"; ok=1; fi
   command -v jq >/dev/null 2>&1 && echo "  ok   jq present" || { echo "  MISS jq (hooks need it)"; ok=1; }
-  command -v gitleaks >/dev/null 2>&1 && echo "  ok   gitleaks present" || echo "  warn gitleaks absent (commit-time scan falls back to CI)"
+  command -v gitleaks >/dev/null 2>&1 && echo "  ok   gitleaks present" || { echo "  MISS gitleaks (every commit and push is blocked until it is installed)"; ok=1; }
   return $ok
 }
 
@@ -55,6 +58,9 @@ require_root
 # Install hooks + standards (standards are read by the hooks' sibling skills and CI).
 mkdir -p "$GUARDRAILS_HOME/hooks" "$GUARDRAILS_HOME/standards"
 install -m 0755 "$REPO_DIR/hooks/"*.sh "$GUARDRAILS_HOME/hooks/"
+# The Python helpers the shell hooks call. Without secret-scan-git.py every commit and
+# push is blocked, because a scan that did not run must never read as a clean one.
+install -m 0644 "$REPO_DIR/hooks/"*.py "$GUARDRAILS_HOME/hooks/"
 if compgen -G "$REPO_DIR/standards/*" >/dev/null; then
   install -m 0644 "$REPO_DIR/standards/"* "$GUARDRAILS_HOME/standards/"
 else
@@ -70,4 +76,4 @@ echo "Installed. Verifying:"
 verify || { echo "Verification reported missing items above." >&2; exit 1; }
 echo
 echo "Done. Claude Code will load these hooks on next launch and developers cannot override them."
-echo "If gitleaks was reported absent, install it (brew install gitleaks / apt) for commit-time secret scanning."
+echo "If gitleaks was reported missing, install it now (brew install gitleaks / apt): until then every commit and push through Claude Code is blocked."

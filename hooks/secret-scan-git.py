@@ -128,9 +128,12 @@ import tempfile
 
 HOOK_DIR = os.path.dirname(os.path.abspath(__file__))
 REAL_HOOK_DIR = os.path.expanduser("~/.claude/hooks")
-for _d in (HOOK_DIR, REAL_HOOK_DIR):
-    if _d not in sys.path:
-        sys.path.insert(0, _d)
+# This hook's own folder wins: the helpers beside it are the ones it shipped with.
+# The installed folder comes second, as a fallback only.
+for _d in (REAL_HOOK_DIR, HOOK_DIR):
+    if _d in sys.path:
+        sys.path.remove(_d)
+    sys.path.insert(0, _d)
 
 BASELINE = "standards/baseline.yml"
 
@@ -338,6 +341,33 @@ def _parser():
         return None
 
 
+class ParserMissing(Exception):
+    """The shared parser could not be imported, so no command can be read."""
+
+
+# Command words that print or search their arguments rather than run them, so
+# `echo git commit` or `grep git push` never counts as an unplaced git call.
+_NON_RUNNING_WORDS = {
+    "echo", "printf", "grep", "egrep", "fgrep", "rg", "ag", "ack", "cat", "head",
+    "tail", "less", "more", "man", "which", "type", "whatis", "apropos", ":",
+}
+
+
+def _unplaced_git_op(tokens, wanted):
+    """The wanted git subcommand a segment names as WORDS but that git_call() did
+    not find, else None. Words, not substrings: a quoted `'git push'` pattern is
+    one token and never counts."""
+    if not tokens or os.path.basename(tokens[0]) in _NON_RUNNING_WORDS:
+        return None
+    for i, tok in enumerate(tokens):
+        if os.path.basename(tok) != "git":
+            continue
+        for later in tokens[i + 1:]:
+            if later in wanted:
+                return later
+    return None
+
+
 def _commit_repos(command, cwd):
     """Extra commit-repository resolution. None in this pack: the local parse
     below resolves `git -C`, a `cd` earlier in the command and the heredoc
@@ -401,7 +431,9 @@ def _git_calls(command, cwd, wanted):
     """
     p = _parser()
     if p is None:
-        return []
+        # Without the parser nothing about the command is known. main() turns
+        # this into a block for anything that looks like a commit or a push.
+        raise ParserMissing("the shared command parser _bash_command_parse.py could not be loaded")
     out = []
 
     def walk(text, here, depth=0):
@@ -433,11 +465,33 @@ def _git_calls(command, cwd, wanted):
                 here = target if os.path.isabs(target) else os.path.join(here, target)
                 continue
             call = p.git_call(tokens)
-            if not call or call["subcommand"] not in wanted:
+            if not call:
+                # A git word followed by a wanted subcommand word that the parse
+                # could not place (an unknown wrapper such as `timeout 5 git push`).
+                # Unknown is not clean, so it becomes an unproven shape.
+                op = _unplaced_git_op(tokens, wanted)
+                if op:
+                    out.append({
+                        "subcommand": op,
+                        "repo": None,
+                        "args": [],
+                        "shape": (
+                            "a git %s behind a command word this scan does not "
+                            "follow (%s)" % (op, _safe(tokens[0]))
+                        ),
+                    })
+                continue
+            if call["subcommand"] not in wanted:
                 continue
             env_moved = _env_target(tokens)
             if call["dash_c"] and not env_moved:
-                repo, shape = call["dash_c"], None
+                # Each relative -C applies to the directory before it, starting
+                # from the shell's own directory, never this process's.
+                repo = here
+                for c in call.get("dash_c_all") or [call["dash_c"]]:
+                    c = os.path.expanduser(c)
+                    repo = c if os.path.isabs(c) else os.path.join(repo, c)
+                shape = None
             elif call["explicit_target"] or env_moved:
                 repo = None
                 shape = (
@@ -1040,6 +1094,16 @@ def main():
             "so it parses (single quotes, or a here-document) and re-run.\n"
         )
         return 2
+    except ParserMissing:
+        if not LOOKS_LIKE_GIT_RE.search(command):
+            return 0
+        sys.stderr.write(
+            "scanner error: the shared command parser _bash_command_parse.py could "
+            "not be loaded, so the staged change and the outgoing commits were NOT "
+            "scanned. This is not a clean result.\n\n"
+            "  Restore _bash_command_parse.py beside this hook and re-run.\n"
+        )
+        return 2
     except Exception:
         # Any other failure to work out the subject is not a clean result either,
         # but the blast radius is deliberately bounded to commands that look like
@@ -1065,10 +1129,19 @@ def main():
     for kind, repo, mode_args, label in subjects:
         try:
             findings = _run_gitleaks(repo, mode_args, label)
+            rows = _describe(findings)
         except ScannerError as exc:
             errors.append(str(exc))
             continue
-        rows = _describe(findings)
+        except Exception as exc:
+            # Any other failure is a missing verdict too, and a traceback would
+            # exit 1, which does not block. Only the class name is printed: the
+            # message of an error raised while reading a finding can quote it.
+            errors.append(
+                "the scan of %s stopped with an unexpected %s, so it produced no "
+                "verdict." % (label, type(exc).__name__)
+            )
+            continue
         if not rows:
             continue
         total += len(rows)

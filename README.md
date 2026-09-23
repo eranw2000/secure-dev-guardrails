@@ -43,9 +43,11 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
 
 ## Install (per machine / fleet)
 
-1. **Hooks + managed settings:** `sudo settings/install.sh` (or push via MDM). Installs hooks to
-   `/usr/local/share/secure-dev-guardrails/` and the managed-settings policy to the OS path so
-   developers cannot disable the hard blocks. Verify with `settings/install.sh --verify`.
+1. **Hooks + managed settings:** `sudo settings/install.sh` (or push via MDM). It first checks
+   for `jq`, `gitleaks` and a working `python3` and installs nothing if one is missing. Then it
+   installs hooks to `/usr/local/share/secure-dev-guardrails/` and, last, the managed-settings
+   policy to the OS path so developers cannot disable the hard blocks. Verify with
+   `settings/install.sh --verify`.
 2. **Skills:** copy `skills/<name>/` into the team's Claude Code skills directory. Apply the
    `skills/enhancements/*.md` changes to the existing code-review / security-review / spec review
    / architect skills.
@@ -54,7 +56,8 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
 4. **Tooling:** `gitleaks` is required: without it the commit and push scan cannot run, so
    `secret-scan.sh` blocks every commit and push and says why, rather than letting an
    unscanned change through as if it were clean. `semgrep` is optional and adds coverage.
-   `python3` must be on the machine, since the hooks call Python helpers.
+   `python3` must be on the machine, since the hooks call Python helpers: the secret scan
+   uses `/usr/bin/python3` when present, else the `python3` on `PATH`. `jq` is required too.
 
 ## What is enforced where
 

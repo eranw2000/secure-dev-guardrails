@@ -26,7 +26,16 @@
 set -u
 
 INPUT=$(cat)
-TOOL=$(echo "$INPUT" | jq -r '.tool_name // ""')
+# Without jq, or with input jq cannot read, the tool name would come back empty and
+# every call would be allowed unchecked. That is a check that never ran, so block.
+if ! command -v jq >/dev/null 2>&1; then
+  printf '%s\n' "privacy check error: jq is not installed, so this check could not read the tool call. This is not a clean result. Install jq (a command you run yourself with \`! brew install jq\`, or your package manager, runs outside this hook) and re-run." >&2
+  exit 2
+fi
+if ! TOOL=$(printf '%s' "$INPUT" | jq -er '.tool_name // ""' 2>/dev/null); then
+  printf '%s\n' "privacy check error: the hook input is not readable JSON, so this check could not run. This is not a clean result." >&2
+  exit 2
+fi
 case "$TOOL" in Edit|Write|MultiEdit|Bash) : ;; *) exit 0 ;; esac
 
 # Bash is covered because a heredoc (`cat > f <<EOF`) writes a file without ever touching

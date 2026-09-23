@@ -1,16 +1,16 @@
-# Enhancement: spec-review, deepen the security/privacy pass
+# Enhancement: spec review, deepen the security/privacy pass
 
 ## What it is today
-`spec-review` checks a feature branch against REQUIREMENTS.md, SPEC.md, and OpenSpec artifacts,
-and writes COMMENTS.md with severity bands. Its step-5 "standard hazards pass" includes one
-security line: "Security: injection, missing authz, secrets in code or logs." Privacy is only
+A spec review skill checks a feature branch against REQUIREMENTS.md, SPEC.md, and OpenSpec
+artifacts, and writes COMMENTS.md with severity bands. A typical one has a "standard hazards
+pass" with one security line: "Security: injection, missing authz, secrets in code or logs." Privacy is only
 implied. There is no required trace of security/privacy requirements to code.
 
 ## Change 1: require an explicit NFR-SEC-* / NFR-PRIV-* trace
 Today an NFR can be satisfied by "a named mechanism present and plausible." Strengthen this for
 security and privacy NFRs: every `NFR-SEC-*` and `NFR-PRIV-*` in scope must be traced to the
 specific code that implements it, and a silent gap is a Blocker (matching how `architect`
-already refuses to drop these in its coverage matrix). Add to step 4:
+already refuses to drop these in its coverage matrix). Add to its requirement-trace step:
 
 ```
 For each in-scope NFR-SEC-* and NFR-PRIV-*: locate the implementing code (not just a plausible
@@ -35,11 +35,11 @@ Replace the single "Security" hazard line with a security line and a privacy lin
 
 ## Change 3: cite the standards vocabulary
 Anchors are already required. Add SEC-* and PRIV-* rule IDs (from `standards/`) to the list of
-valid anchors in the Stance section, so a security/privacy finding cites the rule, not just
+valid anchors the skill accepts, so a security/privacy finding cites the rule, not just
 "security principle."
 
-## Why keep it in spec-review rather than only in privacy-review
-`spec-review` is the gate the team already runs before a PR, and it has the spec in hand, which
+## Why keep it in the spec review rather than only in privacy-review
+The spec review is the gate the team already runs before a PR, and it has the spec in hand, which
 is exactly what is needed to tell whether a security/privacy requirement was actually met.
 `privacy-review` does the deeper standalone data-protection pass; this enhancement makes sure
-spec-review does not approve a branch that silently dropped an NFR-SEC/NFR-PRIV requirement.
+the spec review does not approve a branch that silently dropped an NFR-SEC/NFR-PRIV requirement.

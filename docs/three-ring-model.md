@@ -9,7 +9,7 @@ three rings, and the enforcement comes from combining them.
 Skills and hooks that run while the developer writes code in Claude Code.
 - Skills (advisory, deep): `privacy-review`, `threat-model`, `dependency-review`,
   `secrets-remediation`, plus the security/privacy enhancements to `code-review`,
-  `security-review`, `spec-review`, `architect`.
+  `security-review`, a spec review skill, `architect`.
 - Hooks (deterministic, immediate): `secret-scan.sh` and `pii-in-logs.sh` hard-block the
   unambiguous violations; `sensitive-file-context.sh` and `dangerous-pattern-warn.sh` inject
   guidance on judgment calls.

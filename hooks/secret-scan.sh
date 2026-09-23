@@ -4,22 +4,40 @@
 # Wired as a PreToolUse hook on both Edit/Write and Bash:
 #   - Edit/Write: scans the content about to be written for hardcoded credentials and blocks
 #     the write before it lands. Also blocks creating credential-bearing files (.env, *.pem,
-#     keys, service-account JSON).
-#   - Bash: when the command is `git commit` or `git push`, runs gitleaks against the staged
-#     changes (if gitleaks is installed) and blocks the commit/push on a finding. If gitleaks
-#     is absent it warns instead of blocking, since CI is the backstop.
+#     keys, service-account JSON). That branch lives HERE and is unchanged.
+#   - Bash: handed to hooks/secret-scan-git.py, which decides whether the command really
+#     runs `git commit` or `git push` from the shared quote-aware parse rather than from a
+#     regex, resolves WHICH repository, and scans the right subject in it: the index for a
+#     commit, the index plus the worktree changes for `commit -a`, and the commits that
+#     would leave for a push. See that file's header for why, and for the eight holes
+#     review round A closed in it on 2026-09-11.
 #
-# Protocol: read JSON from stdin, emit JSON to stdout, exit 0. To block, emit decision:"block"
-# + hookSpecificOutput.permissionDecision:"deny" (mirrors block-git-push-main.sh).
+# This file keeps the registration, so settings.json needs no change: it names only
+# secret-scan.sh, for both matchers.
+#
+# Protocol: read JSON from stdin. A PreToolUse hook BLOCKS only via exit code 2 with the
+# message on stderr. The stdout {"decision":"block"} / permissionDecision form (without
+# hookEventName) is NOT honored for PreToolUse and fails OPEN.
+# See https://code.claude.com/docs/en/hooks.md.
 #
 # Bypass for a genuine false positive: append #allow-secret to the command/edit is NOT honored
-# here on purpose. Suppress via standards/baseline.yml (owner + expiry), so suppressions are
-# auditable instead of inline and invisible.
+# here on purpose. Suppress via standards/baseline.yml (owner,
+# expiry and the repo's directory name), so suppressions are auditable instead of inline and
+# invisible.
 
 set -u
 
 INPUT=$(cat)
-TOOL=$(echo "$INPUT" | jq -r '.tool_name // ""')
+# Without jq, or with input jq cannot read, the tool name would come back empty and
+# every call would fall through to "allow". That is a scan that never ran, so block.
+if ! command -v jq >/dev/null 2>&1; then
+  printf '%s\n' "scanner error: jq is not installed, so this secret scan could not read the tool call. This is not a clean result. Install jq (a command you run yourself with \`! brew install jq\`, or your package manager, runs outside this hook) and re-run." >&2
+  exit 2
+fi
+if ! TOOL=$(printf '%s' "$INPUT" | jq -er '.tool_name // ""' 2>/dev/null); then
+  printf '%s\n' "scanner error: the hook input is not readable JSON, so this secret scan could not run. This is not a clean result." >&2
+  exit 2
+fi
 
 # ---- secret value patterns (kept tight to limit false positives) ----
 # The live patterns are the two greps in scan_text_for_secrets() below: a case-sensitive set of
@@ -39,9 +57,13 @@ scan_text_for_secrets() {
   # `api_key = os.environ.get("SOME_NAME")`, where the quoted variable NAME looks like a value.
   # The token signatures above still run over the whole text, so a real credential used as a
   # fallback on an env line is caught there rather than lost here.
+  # The sed drops a FUNCTION NAME that directly follows = or : and precedes (, because
+  # a call is code, not a literal: `secret = mapnodes.add_node(...)` blocked a test on
+  # 2026-09-22. Unquoted literals still match. Board: hooks/tests/test_secret_scan_assignment.py.
   if printf '%s' "$text" \
       | grep -Ev 'os\.environ|os\.getenv|getenv\(|process\.env|Deno\.env|System\.getenv|GetEnvironmentVariable|dotenv|load_dotenv|config\(|settings\.|get_secret|SecretClient|KeyVault|secretsmanager' \
       | tr 'A-Z' 'a-z' \
+      | sed -E 's/([:=])[[:space:]]*[a-z_][a-z0-9_.]*\(/\1(/g' \
       | grep -Eq '(api[_-]?key|secret([_-]?key)?|client[_-]?secret|access[_-]?key|auth[_-]?token|private[_-]?key|refresh[_-]?token|bearer[_-]?token|signing[_-]?key|encryption[_-]?key|session[_-]?secret|connection[_-]?string|password|passwd|pwd)["'"'"' ]*[:=]["'"'"' ]*[a-z0-9/+_=.-]{12,}'; then
     hit="${hit:+$hit,}assignment"
   fi
@@ -74,12 +96,10 @@ deny() {
   exit 2
 }
 
-warn() {
-  # Non-blocking advisory on a PreToolUse call. additionalContext is only honored when
-  # hookSpecificOutput carries the matching hookEventName.
-  jq -n --arg ctx "$1" '{ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: $ctx } }'
-  exit 0
-}
+# There is deliberately NO warn() helper any more. Every path in this hook either
+# allows in silence or blocks with exit 2: a non-blocking advisory was the shape that
+# let a missing scanner read as a clean scan (S4, 2026-09-11), and a dead fail-open
+# helper sitting in a fail-closed hook is an invitation to reuse it.
 
 case "$TOOL" in
   Edit|Write|MultiEdit)
@@ -102,36 +122,61 @@ case "$TOOL" in
       if [ -n "$KINDS" ]; then
         deny \
           "Blocked (SEC-SECRET-01): the content being written looks like a hardcoded credential ($KINDS)." \
-          "SEC-SECRET-01: hardcoded secrets are a Blocker. Move the value to a secret manager or an injected env var and read it at runtime. If this is a confirmed false positive (e.g. a public test key or a documented example), add an entry to standards/baseline.yml with an owner and expiry rather than committing the value."
+          "SEC-SECRET-01: hardcoded secrets are a Blocker. Move the value to a secret manager or an injected env var and read it at runtime. If this is a confirmed false positive (e.g. a public test key or a documented example), add an entry to standards/baseline.yml with an owner, an expiry and repo: <directory name of the repo> rather than committing the value. The register REFUSES an entry that names no repo, because a path is not unique across the estate."
       fi
     fi
     exit 0
     ;;
 
   Bash)
-    COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // ""')
-    [ -z "$COMMAND" ] && exit 0
-    # Only act on commit / push.
-    echo "$COMMAND" | grep -Eq 'git[[:space:]]+(commit|push)([[:space:]]|$)' || exit 0
-
-    if command -v gitleaks >/dev/null 2>&1; then
-      # Scan staged changes; gitleaks exits non-zero on a finding. The report quotes the
-      # detected secret, so write it to a private temp file (600) and remove it on exit,
-      # never a predictable world-readable /tmp path.
-      GLOUT=$(mktemp "${TMPDIR:-/tmp}/gitleaks-hook.XXXXXX") || exit 0
-      chmod 600 "$GLOUT"
-      trap 'rm -f "$GLOUT"' EXIT
-      if ! gitleaks protect --staged --no-banner >"$GLOUT" 2>&1; then
-        REPORT=$(tail -c 2000 "$GLOUT")
-        deny \
-          "Blocked (SEC-SECRET-01): gitleaks found a secret in the staged changes." \
-          "gitleaks flagged the staged diff before this $(echo "$COMMAND" | awk '{print $2}'). Remove the secret, rotate it if it was real, and re-stage. Report tail:\n$REPORT\nSuppress a confirmed false positive via standards/baseline.yml, not inline."
+    # The whole Bash branch is delegated. Two reasons it is not done here:
+    #   - deciding whether a command runs git needs the shared quote-aware parse in
+    #     hooks/_bash_command_parse.py, so `git -C <repo> commit`, `cd <dir> && git` and
+    #     `bash -c "git ..."` all resolve to the right repository. A regex over the raw
+    #     text missed all three, and read the hook process's own directory as the repo.
+    #   - a commit and a push have DIFFERENT subjects. A commit's secret is in the index;
+    #     a push's secret can be in a committed-but-unpushed commit while the index is
+    #     empty, which the old single `--staged` scan reported as clean.
+    #
+    # The interpreter: SECRET_SCAN_PYTHON when set, else the python3 on PATH, else
+    # /usr/bin/python3. PATH comes first so a working Homebrew or venv python wins
+    # over a system stub that only asks to install developer tools. The Python hook is run, not exec'd, so its status can be read:
+    # 0 allows, 2 blocks, and ANYTHING else (a crash, a missing or stub interpreter)
+    # blocks too, because it means no verdict. The here-string avoids a pipe, whose
+    # status would be the last stage's rather than the work's.
+    PY_HOOK="${0%/*}/secret-scan-git.py"
+    [ -f "$PY_HOOK" ] || PY_HOOK="$HOME/.claude/hooks/secret-scan-git.py"
+    if [ -f "$PY_HOOK" ]; then
+      PY="${SECRET_SCAN_PYTHON:-}"
+      if [ -z "$PY" ]; then
+        PY=$(command -v python3 2>/dev/null || true)
+        if [ -z "$PY" ] && [ -x /usr/bin/python3 ]; then
+          PY=/usr/bin/python3
+        fi
       fi
-    else
-      warn \
-        "gitleaks is not installed, so the local secret pre-commit scan was skipped. The CI secret-scan gate still runs server-side and will block the merge if a secret slips through. Consider: brew install gitleaks."
+      if [ -z "$PY" ]; then
+        deny \
+          "scanner error: no python3 found, so the git commit / push secret scan did NOT run. This is not a clean result." \
+          "Install python3, or set SECRET_SCAN_PYTHON to its path, and re-run."
+      fi
+      "$PY" "$PY_HOOK" <<< "$INPUT"
+      STATUS=$?
+      case "$STATUS" in
+        0|2) exit "$STATUS" ;;
+      esac
+      deny \
+        "scanner error: the git commit / push secret scan stopped with status $STATUS, so it produced no verdict. This is not a clean result." \
+        "Interpreter: $PY. Check that it runs (\`$PY --version\`), or set SECRET_SCAN_PYTHON to a working python3, and re-run."
     fi
-    exit 0
+    # The Python half is missing. BLOCK, exactly as a missing gitleaks binary does.
+    # This used to warn and exit 0, on the reasoning that a missing hook file is a
+    # harness problem rather than evidence of a secret. That reasoning is wrong about
+    # the consequence: silence here is indistinguishable from a clean scan, which is
+    # the one failure this hook exists to prevent, and nothing else checks the staged
+    # change or the outgoing commits. Review round A, 2026-09-11 (S4).
+    deny \
+      "scanner error: secret-scan-git.py missing, so the git commit / push secret scan did NOT run. This is not a clean result." \
+      "Nothing checked the staged change or the outgoing commits: this hook's write branch only sees the content of an Edit or a Write, never what is already staged or committed. Looked for it at $PY_HOOK and at \$HOME/.claude/hooks/secret-scan-git.py. Restore the file and re-run."
     ;;
 
   *)

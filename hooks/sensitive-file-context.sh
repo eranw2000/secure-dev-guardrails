@@ -5,7 +5,7 @@
 # Wired as a PostToolUse hook on Edit/Write. When the edited file lives on an auth, crypto,
 # payment, or personal-data path, it injects the relevant standards snippet so the next turn
 # reviews the change against the right rules. The edit already happened; this is a reminder,
-# not a block (mirrors dual-viewport-reminder.sh).
+# not a block.
 #
 # Protocol: read JSON from stdin, emit JSON with hookSpecificOutput.additionalContext, exit 0.
 
@@ -15,26 +15,43 @@ INPUT=$(cat)
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // ""')
 [ -z "$FILE_PATH" ] && exit 0
 
+# A plan file gets a random three-word name, so its words say nothing about what it holds.
+# Measured 2026-09-21: `hashed-bouncing-backus.md` raised the crypto reminder. A plan is not
+# code, so no rule here applies to it.
+# A path holding /../ or /./ could resolve outside plans, so it is never skipped. HOME may be
+# unset (set -u) or end in a slash, and a tool may pass the literal ~ form.
+H="${HOME:-}"; H="${H%/}"
+case "$FILE_PATH" in
+  */../*|*/./*) : ;;
+  "~/.claude/plans/"*) exit 0 ;;
+  *) if [ -n "$H" ]; then case "$FILE_PATH" in "$H/.claude/plans/"*) exit 0 ;; esac; fi ;;
+esac
+
 LOWER=$(printf '%s' "$FILE_PATH" | tr 'A-Z' 'a-z')
 CTX=""
 
 case "$LOWER" in
   *auth*|*login*|*session*|*oauth*|*token*|*permission*|*authoriz*|*rbac*|*acl*|*middleware*)
-    CTX="${CTX}AUTH/ACCESS path edited ($FILE_PATH). Check SEC-WEB-02 (object-level authorization, not just authentication) and PRIV-ACC-01 (personal-data access restricted to roles that need it). Confirm the change does not widen who can reach a resource or weaken an authz check.\nAuthentication rules for this path: SEC-AUTH-01 every non-public route authenticates server-side, and a public one is public by a decision you can point at. SEC-AUTH-02 no home-grown scheme; use the platform, an established library, or an identity provider. SEC-AUTH-03 a token's issuer, audience, signature, expiry and intended type are all checked, and decoding is not verifying. SEC-AUTH-04 absolute lifetime and idle timeout, a new session id when privilege changes, server-side invalidation on logout and password change. SEC-AUTH-05 repeated failures rate-limited per account and per source, with the counter in a store every worker shares. SEC-AUTH-06 a failed login does not reveal which half failed. Rules: standards/security-standards.md\n\n" ;;
+    CTX="${CTX}AUTH/ACCESS path edited ($FILE_PATH). Check SEC-WEB-02 (object-level authorization, not just authentication) and PRIV-ACC-01 (personal-data access restricted to roles that need it). Confirm the change does not widen who can reach a resource or weaken an authz check.\nAuthentication rules for this path: SEC-AUTH-01 every non-public route authenticates server-side, and a public one is public by a decision you can point at. SEC-AUTH-02 no home-grown scheme; use the platform, an established library, or an identity provider. SEC-AUTH-03 a token's issuer, audience, signature, expiry and intended type are all checked, and decoding is not verifying. SEC-AUTH-04 absolute lifetime and idle timeout, a new session id when privilege changes, server-side invalidation on logout and password change. SEC-AUTH-05 repeated failures rate-limited per account and per source, with the counter in a store every worker shares. SEC-AUTH-06 a failed login does not reveal which half failed.\n\n" ;;
 esac
 case "$LOWER" in
   *crypto*|*encrypt*|*cipher*|*hash*|*secret*|*signing*|*jwt*|*keystore*)
     CTX="${CTX}CRYPTO path edited ($FILE_PATH). Check SEC-CRYPTO-01 (no disabled TLS verification), SEC-CRYPTO-02 (no MD5/SHA-1/DES/ECB/static-IV; use AES-GCM and a slow KDF for passwords), SEC-CRYPTO-03 (no custom crypto).\n\n" ;;
 esac
 case "$LOWER" in
-  *mcp*|*claude_desktop_config*|*mcp_servers*|*claude.json*)
-    CTX="${CTX}CONNECTED-SERVER config edited ($FILE_PATH). Check SEC-AI-MCP-01 (establish who publishes the server and pin its version; require an encrypted transport for anything off this machine) and SEC-AI-MCP-03 (know what data reaches it, and never send a credential, personal data or client content to a server whose operator is not established). Rules: standards/ai-agent-standards.md\n\n" ;;
-esac
-case "$LOWER" in
   *payment*|*billing*|*checkout*|*charge*|*invoice*|*stripe*|*paypal*|*card*)
     CTX="${CTX}PAYMENT path edited ($FILE_PATH). Do not store PAN/CVV (PRIV special-category/financial). Confirm tokenization and that no cardholder data lands in logs (PRIV-LOG-01) or fixtures (PRIV-ANON-01).\n\n" ;;
 esac
 case "$LOWER" in
+  *mcp*|*claude_desktop_config*|*mcp_servers*|*claude.json*)
+    CTX="${CTX}CONNECTED-SERVER config edited ($FILE_PATH). Check SEC-AI-MCP-01 (establish who publishes the server and pin its version; require an encrypted transport for anything off this machine) and SEC-AI-MCP-03 (know what data reaches it, and never send a credential, personal data or client content to a server whose operator is not established). Rules: standards/ai-agent-standards.md\n\n" ;;
+esac
+# The personal-data words match on the file name and its parent folder ONLY. Matched
+# against the whole path, `*user*` hit `/Users/` and fired on every edit on this Mac
+# (103,204 of 103,204 files, measured 2026-08-28; again on every write 2026-09-14), which
+# buried the reminders that mean something. `users/models.py` and `profile.html` still fire.
+NEAR=$(printf '%s' "$FILE_PATH" | awk -F/ '{ if (NF > 1) print $(NF-1) "/" $NF; else print $NF }' | tr 'A-Z' 'a-z')
+case "$NEAR" in
   *user*|*account*|*profile*|*customer*|*subscriber*|*member*|*contact*|*person*|*patient*|*pii*|*gdpr*|*privacy*)
     CTX="${CTX}PERSONAL-DATA path edited ($FILE_PATH). Check the privacy rules: PRIV-MIN-01 (only fields needed for the purpose), PRIV-RET-01/02 (retention period + reachable deletion path), PRIV-RIGHTS-01 (the new data is reachable by access/portability/opt-out flows), PRIV-LOG-01 (no PII in logs). If you added a new personal-data store, confirm the deletion path and subject-rights tooling know about it.\n\n" ;;
 esac

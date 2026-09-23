@@ -57,5 +57,5 @@ can look up exactly what it means.
 - `privacy-review`, data-protection pass over your branch (GDPR + CCPA).
 - `dependency-review`, CVEs, licenses, and supply-chain risk in dependencies you changed.
 - `threat-model`, design-time STRIDE + LINDDUN before you build a new surface.
-- `spec-review` / `code-review` / `security-review`, the existing reviews, now with the
+- your spec review skill / `code-review` / `security-review`, the existing reviews, now with the
   security/privacy lens added.

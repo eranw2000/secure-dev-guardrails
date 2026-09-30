@@ -31,15 +31,28 @@ LOWER=$(printf '%s' "$FILE_PATH" | tr 'A-Z' 'a-z')
 CTX=""
 
 case "$LOWER" in
-  *auth*|*login*|*session*|*oauth*|*token*|*permission*|*authoriz*|*rbac*|*acl*|*middleware*)
-    CTX="${CTX}AUTH/ACCESS path edited ($FILE_PATH). Check SEC-WEB-02 (object-level authorization, not just authentication) and PRIV-ACC-01 (personal-data access restricted to roles that need it). Confirm the change does not widen who can reach a resource or weaken an authz check.\nAuthentication rules for this path: SEC-AUTH-01 every non-public route authenticates server-side, and a public one is public by a decision you can point at. SEC-AUTH-02 no home-grown scheme; use the platform, an established library, or an identity provider. SEC-AUTH-03 a token's issuer, audience, signature, expiry and intended type are all checked, and decoding is not verifying. SEC-AUTH-04 absolute lifetime and idle timeout, a new session id when privilege changes, server-side invalidation on logout and password change. SEC-AUTH-05 repeated failures rate-limited per account and per source, with the counter in a store every worker shares. SEC-AUTH-06 a failed login does not reveal which half failed.\n\n" ;;
+  # oidc/openid/saml/signin/jwt/jwks cover sign-in code whose file names use none of
+  # the older words (an oidc.ts module, a signin route).
+  *auth*|*login*|*session*|*oauth*|*token*|*permission*|*authoriz*|*rbac*|*acl*|*middleware*|*oidc*|*openid*|*saml*|*signin*|*sign-in*|*sign_in*|*jwt*|*jwks*)
+    CTX="${CTX}AUTH/ACCESS path edited ($FILE_PATH). Check SEC-WEB-02 (object-level authorization, not just authentication) and PRIV-ACC-01 (personal-data access restricted to roles that need it). Confirm the change does not widen who can reach a resource or weaken an authz check.\nAuthentication rules for this path: SEC-AUTH-01 every non-public route authenticates server-side, and a public one is public by a decision you can point at. SEC-AUTH-02 no home-grown scheme; use the platform, an established library, or an identity provider. SEC-AUTH-03 a token's issuer, audience, signature, expiry and intended type are all checked, and decoding is not verifying; the signature is checked against the key set the provider publishes for THIS app (Entra: keys?appid=<client id>, since an app ever set up for SAML signs with its own certificate) with the algorithm pinned. SEC-AUTH-07 every answer from the identity provider is classified fail-closed: only the documented success shape passes, only a named outage (5xx, 429, 408, temporarily_unavailable, no connection) keeps the session, anything else (an HTML or empty 4xx, a 2xx that is not a token, a redirect) ends it. SEC-AUTH-04 absolute lifetime and idle timeout, a new session id when privilege changes, server-side invalidation on logout and password change. SEC-AUTH-05 repeated failures rate-limited per account and per source, with the counter in a store every worker shares. SEC-AUTH-06 a failed login does not reveal which half failed.\n\n" ;;
 esac
 case "$LOWER" in
   *crypto*|*encrypt*|*cipher*|*hash*|*secret*|*signing*|*jwt*|*keystore*)
     CTX="${CTX}CRYPTO path edited ($FILE_PATH). Check SEC-CRYPTO-01 (no disabled TLS verification), SEC-CRYPTO-02 (no MD5/SHA-1/DES/ECB/static-IV; use AES-GCM and a slow KDF for passwords), SEC-CRYPTO-03 (no custom crypto).\n\n" ;;
 esac
+# Only words that mean money anywhere in the path. "card" and "charge" are left out
+# (Kanban and UI cards, "discharge"), and "checkout" counts only as the file's own name
+# or its folder.
+PAY=""
 case "$LOWER" in
-  *payment*|*billing*|*checkout*|*charge*|*invoice*|*stripe*|*paypal*|*card*)
+  *payment*|*billing*|*invoice*|*stripe*|*paypal*|*cardholder*|*creditcard*|*credit_card*|*credit-card*) PAY=1 ;;
+esac
+STEM=$(basename "$LOWER"); STEM="${STEM%%.*}"; STEM="${STEM#test_}"
+PARENT=$(basename "$(dirname "$LOWER")")
+case "$STEM" in checkout*) PAY=1 ;; esac
+case "$PARENT" in checkout|checkouts) PAY=1 ;; esac
+case "$PAY" in
+  1)
     CTX="${CTX}PAYMENT path edited ($FILE_PATH). Do not store PAN/CVV (PRIV special-category/financial). Confirm tokenization and that no cardholder data lands in logs (PRIV-LOG-01) or fixtures (PRIV-ANON-01).\n\n" ;;
 esac
 case "$LOWER" in

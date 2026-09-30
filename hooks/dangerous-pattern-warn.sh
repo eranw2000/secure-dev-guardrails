@@ -46,7 +46,13 @@ if [ "$IS_SHELL" != 1 ]; then
 { grep -Eqn 'rejectUnauthorized[[:space:]]*:[[:space:]]*false|InsecureRequestWarning|TrustAllCerts|ServerCertificateValidationCallback[[:space:]]*=[[:space:]]*.*true' "$FILE_PATH" \
   || grep -Ev 'decode[[:space:]]*\(' "$FILE_PATH" | grep -Eq 'verify[[:space:]]*=[[:space:]]*False'; } \
   && add "SEC-CRYPTO-01" "disabled TLS/certificate verification"
-grep -Eqn '(^|[^A-Za-z0-9])(MD5|SHA1|DES|RC4)([^A-Za-z0-9]|$)|"ECB"|/ECB/|MessageDigest\.getInstance\("(MD5|SHA-1)"\)' "$FILE_PATH" \
+# Standards rule IDs (SEC-DES-01, PRIV-LOG-01) are blanked first: a `-` counts as a word
+# edge here, so `SEC-DES-01` would otherwise read as the DES cipher. An article before
+# the name and a lowercase word after it ("the DES cipher") is English prose, which no
+# code line forms, so it is blanked too.
+sed -E -e 's/(SEC|PRIV)(-[A-Z]+)+-[0-9]+//g' \
+       -e 's/(^|[^A-Za-z0-9])([Tt]he|[Aa]n?) (MD5|SHA1|DES|RC4) ([a-z])/\1\2 _ \4/g' "$FILE_PATH" \
+  | grep -Eq '(^|[^A-Za-z0-9])(MD5|SHA1|DES|RC4)([^A-Za-z0-9]|$)|"ECB"|/ECB/|MessageDigest\.getInstance\("(MD5|SHA-1)"\)' \
   && add "SEC-CRYPTO-02" "weak crypto primitive (MD5/SHA1/DES/RC4/ECB)"
 
 # --- SEC-AUTH-03: a token check switched OFF. Only the explicit switches are matched, never the

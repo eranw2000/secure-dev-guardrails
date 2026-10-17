@@ -55,8 +55,18 @@ case "$PAY" in
   1)
     CTX="${CTX}PAYMENT path edited ($FILE_PATH). Do not store PAN/CVV (PRIV special-category/financial). Confirm tokenization and that no cardholder data lands in logs (PRIV-LOG-01) or fixtures (PRIV-ANON-01).\n\n" ;;
 esac
-case "$LOWER" in
-  *mcp*|*claude_desktop_config*|*mcp_servers*|*claude.json*)
+# Connected-server CONFIG files only, by the file's own name. Matched against the whole path,
+# `*mcp*` fired on an MCP SERVER's own code and on notes named for it.
+# A config is a known name, an
+# mcp_servers file, or a JSON/TOML/YAML file whose own name says mcp.
+BASE=$(basename "$LOWER")
+CONN=""
+case "$BASE" in
+  .mcp.json|mcp.json|claude_desktop_config.json|.claude.json|claude.json|mcp_servers*|mcp-servers*) CONN=1 ;;
+  *mcp*.json|*mcp*.jsonc|*mcp*.toml|*mcp*.yaml|*mcp*.yml) CONN=1 ;;
+esac
+case "$CONN" in
+  1)
     CTX="${CTX}CONNECTED-SERVER config edited ($FILE_PATH). Check SEC-AI-MCP-01 (establish who publishes the server and pin its version; require an encrypted transport for anything off this machine) and SEC-AI-MCP-03 (know what data reaches it, and never send a credential, personal data or client content to a server whose operator is not established). Rules: standards/ai-agent-standards.md\n\n" ;;
 esac
 # The personal-data words match on the file name and its parent folder ONLY. Matched

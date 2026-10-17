@@ -47,7 +47,19 @@ fi
 # grep -E lacks (?i); emulate by lowercasing a copy for the case-insensitive line.
 scan_text_for_secrets() {
   local text="$1"
+  local path="${2:-}"
   local hit=""
+  # In a CODE file a value written without quotes is code: a variable, a constant or an
+  # attribute, never a literal secret, which code must quote. So there, a plain name (letters,
+  # underscores and dots, no digits) right after = or : is dropped before the assignment grep.
+  # A dict entry mapping a secret-named key to a constant's NAME is code, not a secret.
+  # Config and shell files are NOT code here: YAML, .env, compose and export lines
+  # carry real secrets without quotes.
+  local name_sed='s/^//'
+  case "$(printf '%s' "${path##*/}" | tr 'A-Z' 'a-z')" in
+    *.py|*.pyi|*.js|*.mjs|*.cjs|*.jsx|*.ts|*.tsx|*.go|*.java|*.kt|*.kts|*.cs|*.rb|*.php|*.swift|*.rs|*.scala|*.dart)
+      name_sed='s/([:=])[[:space:]]*[a-z_][a-z_.]*([^a-z0-9_./+=-]|$)/\1\2/g' ;;
+  esac
   # Case-sensitive token patterns.
   if printf '%s' "$text" | grep -Eq '\-\-\-\-\-BEGIN ([A-Z]+ )?PRIVATE KEY\-\-\-\-\-|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|gh[opsu]_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{22,}|xox[baprs]-[0-9A-Za-z-]{10,}|xapp-[0-9A-Za-z-]{10,}|AIza[0-9A-Za-z_-]{35}|sk_live_[0-9A-Za-z]{24,}|rk_live_[0-9A-Za-z]{24,}|sk-ant-[0-9A-Za-z_-]{20,}|sk-[A-Za-z0-9]{32,}|eyJ[A-Za-z0-9_=-]{8,}\.[A-Za-z0-9_=-]{8,}\.[A-Za-z0-9_=-]{8,}'; then
     hit="token"
@@ -64,6 +76,7 @@ scan_text_for_secrets() {
       | grep -Ev 'os\.environ|os\.getenv|getenv\(|process\.env|Deno\.env|System\.getenv|GetEnvironmentVariable|dotenv|load_dotenv|config\(|settings\.|get_secret|SecretClient|KeyVault|secretsmanager' \
       | tr 'A-Z' 'a-z' \
       | sed -E 's/([:=])[[:space:]]*[a-z_][a-z0-9_.]*\(/\1(/g' \
+      | sed -E "$name_sed" \
       | grep -Eq '(api[_-]?key|secret([_-]?key)?|client[_-]?secret|access[_-]?key|auth[_-]?token|private[_-]?key|refresh[_-]?token|bearer[_-]?token|signing[_-]?key|encryption[_-]?key|session[_-]?secret|connection[_-]?string|password|passwd|pwd)["'"'"' ]*[:=]["'"'"' ]*[a-z0-9/+_=.-]{12,}'; then
     hit="${hit:+$hit,}assignment"
   fi
@@ -118,7 +131,7 @@ case "$TOOL" in
     fi
 
     if [ -n "$CONTENT" ]; then
-      KINDS=$(scan_text_for_secrets "$CONTENT")
+      KINDS=$(scan_text_for_secrets "$CONTENT" "$FILE_PATH")
       if [ -n "$KINDS" ]; then
         deny \
           "Blocked (SEC-SECRET-01): the content being written looks like a hardcoded credential ($KINDS)." \

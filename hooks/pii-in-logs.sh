@@ -254,6 +254,10 @@ line_has_card() {
   while IFS= read -r cand; do
     [ -n "$cand" ] || continue
     digits=$(printf '%s' "$cand" | tr -cd '0-9')
+    # Card networks start with 2 to 6 (Mastercard 2/5, Amex/Diners/JCB 3, Visa 4, Discover/
+    # UnionPay 6). Any 13-16 digit id passes Luhn one time in ten, so without this a long id
+    # blocks at random.
+    case "${digits:0:1}" in [2-6]) ;; *) continue ;; esac
     luhn_ok "$digits" && return 0
   done <<EOF
 $(printf '%s' "$line" | grep -oE '[0-9][0-9 -]{11,17}[0-9]')
@@ -429,8 +433,12 @@ while IFS= read -r line; do
   if line_has_card "$line"; then add_hit "card-in-log" "$line"; continue; fi
   # SSN shape, but only next to an SSN context word.
   if echo "$line" | grep -Eq "$PII_SSN" && echo "$ctx" | grep -Eq "$SSN_CTX"; then add_hit "ssn-in-log" "$line"; continue; fi
-  # Phone shape, but only next to a phone context word.
-  if echo "$ctx" | grep -Eq "$PHONE_CTX" && echo "$line" | grep -Eq '\+?[0-9][0-9 .()-]{7,}[0-9]'; then add_hit "phone-in-log" "$line"; continue; fi
+  # Phone shape, but only next to a phone context word. An ISO date, with or without a time, is
+  # removed first: "2026-10-06 03" is eight digits with dashes and a space, so a dated note
+  # is not read as a telephone number.
+  # A real number beside a date still hits.
+  nodate=$(printf '%s' "$line" | sed -E 's/(^|[^0-9])(19|20)[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])([T ][0-9]{2}(:[0-9]{2}){0,2})?([^0-9]|$)/\1 \7/g')
+  if echo "$ctx" | grep -Eq "$PHONE_CTX" && echo "$nodate" | grep -Eq '\+?[0-9][0-9 .()-]{7,}[0-9]'; then add_hit "phone-in-log" "$line"; continue; fi
 
   # NAME test last, and it only WARNS (2026-09-23). A field word in a print cannot tell
   # the value from a count, a yes/no or a label, and ten one-shape patches never closed that:

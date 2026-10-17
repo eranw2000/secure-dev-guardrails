@@ -42,7 +42,16 @@ HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 SEGMENT_SPLIT = re.compile(r"\|\||&&|;|\||\$\(|`")
 
 
+# A bare lowercase `key` or `pat` is a NAME, not a secret: a config key, a keychain item
+# name, a loop label, a grep pattern.
+# The secret, when there is one, sits in another variable.
+# `$KEY`, `$PAT`, `$api_key` and `$token` still count.
+NOT_CREDENTIAL = {"key", "pat"}
+
+
 def is_credential(name):
+    if name in NOT_CREDENTIAL:
+        return False
     return name.split("_")[-1].upper() in CRED_PARTS
 
 

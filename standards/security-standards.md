@@ -94,7 +94,21 @@ stored is `SEC-CRYPTO-02`; these rules cover the scheme around it.
   a separate signing key per purpose, and the endpoint checks it, because an access token
   replayed where a refresh token belongs passes every other check on this list. An OPAQUE token,
   a random identifier the server looks up, carries no claims to check and is governed by
-  SEC-AUTH-04 instead.
+  SEC-AUTH-04 instead. **The signature is checked against the key set the identity provider
+  publishes for THIS application**, which is not always the tenant-wide one: Entra signs the
+  tokens of an app that has its own signing certificate (every app ever set up for SAML has one)
+  with that certificate, found only under `keys?appid=<client id>`, and its published keys carry
+  no `alg`, so the verifier's own algorithm pin is the only guard. Read the provider's metadata
+  for the app (`.well-known/openid-configuration?appid=`) and use the `jwks_uri` it names.
+- **SEC-AUTH-07 (Blocker):** Every answer from an identity provider's token endpoint is
+  classified FAIL-CLOSED, because a session that re-checks a person at the provider is only as
+  strict as its reading of the reply. Only the documented success shape passes (for OAuth 2.0:
+  a JSON body with `access_token` and the expected `token_type`); only a NAMED outage keeps the
+  session for a bounded time (5xx, 429, 408, `temporarily_unavailable`, no connection); every
+  other answer is a refusal and ends the session: a 4xx whose body is HTML, empty or has no
+  `error`, a 2xx that is not a token, a redirect (do not follow it). A classifier written as
+  "known refusals end it, everything else is a network problem" fails open on exactly the
+  answers nobody tested.
 - **SEC-AUTH-04 (Major):** A session ends. Set an absolute lifetime and an idle timeout, issue a
   new session identifier whenever privilege changes (at login, and at any elevation), and
   invalidate server-side on logout and on password change. Write both values down with the reason

@@ -1185,8 +1185,10 @@ def main():
         parts.append("")
         parts.append(
             "Remove the secret, rotate it if it was ever real, and re-run. Suppress "
-            "a confirmed false positive via " + BASELINE + " with an owner, an "
-            "expiry and `repo: <directory name of the repo>`, not inline."
+            "a confirmed false positive in the repo's `.gitleaksignore`, one exact "
+            "fingerprint per finding (for a staged commit `<path>:<rule>:<line>`) "
+            "under a comment saying why, never inline. " + BASELINE + " does NOT "
+            "silence gitleaks: only the semgrep reporter reads it."
         )
         if errors:
             parts.append("")

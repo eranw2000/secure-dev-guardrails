@@ -55,14 +55,17 @@ no history, no file contents.
 
 **Before running it, re-read the brief and confirm by eye that it carries no
 value.** A value sent out cannot be recalled. **Always pass `--repo` a NEW empty
-folder** as above: with no `--repo`, Codex works in the current folder, which is
-usually the repository that leaked.
+folder** as above, so Codex does not start inside the repository that leaked (with
+no `--repo` it works in the current folder). The runner refuses an empty `--repo`,
+so a failed `mktemp` stops the run. The brief carrying no value is what keeps the
+secret safe.
 
 **Fail loud.** If it did not run, say so with the runner's exit reason and
 continue on Claude. Rotation is time-critical and never waits on a second
 opinion.
-Exit 15 means the user set `CODEX_REVIEW=off`: no retry, continue on Claude, and
-say `Codex review: off (CODEX_REVIEW=off)` in the report.
+Exit 15 means the user set `CODEX_REVIEW=off`: no retry, ignore any old file at
+the `--out` path, continue on Claude, and say `Codex review: off (CODEX_REVIEW=off)`
+in the report.
 
 ## Process
 

@@ -21,8 +21,7 @@ You check what a change pulls into the supply chain. Anchored to SEC-DEP-01 to 0
 ## Optional: a second model family for the analysis pass
 
 When the Codex CLI is set up, run the analysis pass on an OpenAI model through
-headless Codex, so a model family that does not share Claude's blind spots reads
-the change. Read `~/.claude/skills/_shared/codex-delegation.md` and follow it.
+headless Codex, so a model from a different family reads the change on its own. Read `~/.claude/skills/_shared/codex-delegation.md` and follow it.
 Claude stays the driver: it sets the scope, writes the brief, verifies what comes
 back, and owns the document and the verdict.
 

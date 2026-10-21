@@ -36,8 +36,8 @@ of the following ever enters a brief, a prompt, an output path or a log:
 
 **What is NOT delegated, and must run here.** Rotation, removal, the history
 scrub, the push, and the verification. Those write, they destroy, and they touch
-live credentials. They run under your machine's own guards, and Codex runs in a
-sandbox where none of those guards exist. The scope search at step 3 is a `git
+live credentials. They run under your machine's own guards, so they stay in
+Claude's hands. The scope search at step 3 is a `git
 log` with a known answer shape; it needs no model at all.
 
 **What IS delegated: a value-free planning pass.** Describe the leak in the
@@ -49,18 +49,21 @@ who must be told, and the hardening that stops a recurrence (step 7). No value,
 no history, no file contents.
 
     python3 ~/.claude/skills/_shared/codex_delegate.py \
-      --repo <a path with no secret in it, or omit --repo entirely> \
+      --repo "$(mktemp -d)" \
       --prompt-file <value-free brief> \
       --out <a folder outside the repo>/SECRETS-PLAN-codex.md --label secrets-plan
 
 **Before running it, re-read the brief and confirm by eye that it carries no
-value.** This is the one delegation where a mistake cannot be taken back.
+value.** A value sent out cannot be recalled. **Always pass `--repo` a NEW empty
+folder** as above: with no `--repo`, Codex works in the current folder, which is
+usually the repository that leaked.
 
 **Fail loud.** If it did not run, say so with the runner's exit reason and
 continue on Claude. Rotation is time-critical and never waits on a second
 opinion.
 Exit 15 means the user set `CODEX_REVIEW=off`: no retry, continue on Claude, and
 say `Codex review: off (CODEX_REVIEW=off)` in the report.
+
 ## Process
 
 ### 1. Identify and classify the secret

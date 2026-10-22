@@ -50,7 +50,14 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
    `settings/install.sh --verify`.
 2. **Skills:** copy `skills/<name>/` into the team's Claude Code skills directory. Apply the
    `skills/enhancements/*.md` changes to the existing code-review / security-review / spec review
-   / architect skills.
+   / architect skills. Copy `skills/_shared/` to `~/.claude/skills/_shared/` too: the four
+   skills read the Codex guide and runner from there.
+   **Optional second model family.** threat-model, privacy-review, dependency-review and
+   secrets-remediation can hand their analysis pass to an OpenAI model through the
+   [Codex CLI](https://github.com/openai/codex) (`codex login` first; check with
+   `python3 ~/.claude/skills/_shared/codex_delegate.py --check`). No Codex account? Set
+   `{ "env": { "CODEX_REVIEW": "off" } }` in `~/.claude/settings.json`: the runner then exits 15,
+   the analysis runs on Claude, and the document says `Codex review: off (CODEX_REVIEW=off)`.
 3. **CI:** reference `ci/security-privacy.yml` from each repo's workflow and make the check
    Required in branch protection. Install pre-commit per clone for local feedback.
 4. **Tooling:** `gitleaks` is required: without it the commit and push scan cannot run, so

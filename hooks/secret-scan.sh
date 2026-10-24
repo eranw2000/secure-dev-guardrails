@@ -72,8 +72,11 @@ scan_text_for_secrets() {
   # The sed drops a FUNCTION NAME that directly follows = or : and precedes (, because
   # a call is code, not a literal: `secret = mapnodes.add_node(...)` blocked a test on
   # 2026-09-22. Unquoted literals still match. Board: hooks/tests/test_secret_scan_assignment.py.
+  # A Django test settings override (`self.settings(`, `override_settings(`, `modify_settings(`)
+  # is skipped like a `settings.` read: a test's fake value there is not a secret.
+  # A real token on such a line is still caught above.
   if printf '%s' "$text" \
-      | grep -Ev 'os\.environ|os\.getenv|getenv\(|process\.env|Deno\.env|System\.getenv|GetEnvironmentVariable|dotenv|load_dotenv|config\(|settings\.|get_secret|SecretClient|KeyVault|secretsmanager' \
+      | grep -Ev 'os\.environ|os\.getenv|getenv\(|process\.env|Deno\.env|System\.getenv|GetEnvironmentVariable|dotenv|load_dotenv|config\(|settings\.|\.settings\(|override_settings\(|modify_settings\(|get_secret|SecretClient|KeyVault|secretsmanager' \
       | tr 'A-Z' 'a-z' \
       | sed -E 's/([:=])[[:space:]]*[a-z_][a-z0-9_.]*\(/\1(/g' \
       | sed -E "$name_sed" \

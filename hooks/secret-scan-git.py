@@ -187,7 +187,8 @@ FALLBACK_TOKEN_PATTERN = (
 )
 FALLBACK_ENV_PATTERN = (
     r"os\.environ|os\.getenv|getenv\(|process\.env|Deno\.env|System\.getenv|"
-    r"GetEnvironmentVariable|dotenv|load_dotenv|config\(|settings\.|get_secret|"
+    r"GetEnvironmentVariable|dotenv|load_dotenv|config\(|settings\.|"
+    r"\.settings\(|override_settings\(|modify_settings\(|get_secret|"
     r"SecretClient|KeyVault|secretsmanager"
 )
 # The quote class is written as an ESCAPE rather than pasted, because a raw string

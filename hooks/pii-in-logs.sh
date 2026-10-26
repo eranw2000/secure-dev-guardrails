@@ -382,6 +382,31 @@ reserved_view() {
   printf '%s' "$1" | sed -E 's/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.(example|test|invalid|localhost)([^A-Za-z0-9.-]|$)/ \2/g'
 }
 
+# A mailbox whose WHOLE local part is noreply, no-reply, donotreply or do-not-reply is a
+# sending robot's address, not a person's, so it is removed before the VALUE test only. The
+# local part must be exactly that word: `123+name@users.noreply.github.com` names a GitHub
+# user, its local part is `123+name`, and it still blocks.
+#
+# Both edges are an ALLOW list, because a local part may legally hold `! # / ~ ' = {` and
+# a backtick, so "not an address character" is not proof the address started there. Before
+# the robot word, one of:
+#   - start of line, white space, or a character no local part can hold: `" < ( [ , ; : >`;
+#   - `'`, a backtick or `from=`, which a local part CAN hold, so each counts only when it
+#     itself sits after one of the above. The local part is then either the robot word or
+#     that short prefix plus it (`'noreply`, `from=noreply`), and neither names a person.
+# So `dana'noreply@x.com`, `dana{noreply@x.com` and `dana=noreply@x.com` block.
+# After the domain: anything that cannot continue a domain or start another address, so
+# `noreply@x.com.dana@y.com` is one string and still blocks. That right edge is consumed,
+# so the rule repeats until nothing changes, or `noreply@a.com,noreply@b.com` would leave
+# the second address. Each removed address leaves an `x`, the letter a domain ends in, so
+# the next address is judged against the same text it really followed.
+robot_view() {
+  local b="[[:space:]\"<([,;:>]"
+  printf '%s' "$1" | sed -E -e ':a' \
+    -e "s#(^|$b|(^|$b)(['\`]|[Ff][Rr][Oo][Mm]=))([Nn][Oo]-?[Rr][Ee][Pp][Ll][Yy]|[Dd][Oo]-?[Nn][Oo][Tt]-?[Rr][Ee][Pp][Ll][Yy])@[A-Za-z0-9.-]+\.[A-Za-z]{2,}([^A-Za-z0-9.@-]|\$)#\1x\5#" \
+    -e 'ta'
+}
+
 # A FILE PATH is a name on disk, not a person's field, so a path-like word is removed before the
 # FIELD-NAME test only: a word holding a "/", and a word ending in a data-file extension. A word
 # holding "{" or "(" is kept, so an interpolated field inside a path (`f"/data/{u.<field>}"`) is
@@ -427,7 +452,7 @@ while IFS= read -r line; do
   # VALUE tests first. Each one sees an actual piece of personal data on the line, so each
   # one BLOCKS.
   # Email: unambiguous, block on sight.
-  pv=$(reserved_view "$(predicate_view "$line")")
+  pv=$(robot_view "$(reserved_view "$(predicate_view "$line")")")
   if echo "$pv" | grep -Eq "$PII_EMAIL"; then add_hit "email-in-log" "$line"; continue; fi
   # Card: only a Luhn-valid number counts (ignores order numbers, timestamps, ids).
   if line_has_card "$line"; then add_hit "card-in-log" "$line"; continue; fi

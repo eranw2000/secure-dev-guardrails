@@ -23,3 +23,6 @@ jobs:
         run: |
           pipx install semgrep
           python3 ci/tests/run_detection_tests.py
+      - name: installer test
+        shell: bash
+        run: bash ci/tests/test_install.sh

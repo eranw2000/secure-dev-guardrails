@@ -24,6 +24,25 @@ case "$(uname -s)" in
 esac
 MANAGED_DIR="${SDG_MANAGED_DIR:-$MANAGED_DIR}"
 MANAGED_FILE="$MANAGED_DIR/managed-settings.json"
+# The folder the checked-in managed-settings.json names. The installed copy names
+# GUARDRAILS_HOME instead, so the two always agree.
+DEFAULT_HOME="/usr/local/share/secure-dev-guardrails"
+
+# Each registration the policy must carry, as event|matcher|command-suffix. The command is
+# "<GUARDRAILS_HOME>/hooks/<suffix>" for a shell hook and "python3 <...>" for a Python one,
+# because the Python hooks are installed 0644 and must be run through the interpreter.
+REGISTRATIONS=(
+  "PreToolUse|Edit|Write|MultiEdit|sh|secret-scan.sh"
+  "PreToolUse|Edit|Write|MultiEdit|sh|pii-in-logs.sh"
+  "PreToolUse|Bash|sh|secret-scan.sh"
+  "PreToolUse|Bash|sh|pii-in-logs.sh"
+  "PreToolUse|Bash|py|destructive-command-guard.py"
+  "PreToolUse|Bash|py|write-then-remote-guard.py"
+  "PreToolUse|Bash|py|chain-abort-guard.py"
+  "PreToolUse|Bash|py|shell-status-guard.py"
+  "PostToolUse|Edit|Write|MultiEdit|sh|sensitive-file-context.sh"
+  "PostToolUse|Edit|Write|MultiEdit|sh|dangerous-pattern-warn.sh"
+)
 
 # The interpreter the secret-scan hook will pick: the python3 on PATH, else
 # /usr/bin/python3. Checked here with the same rule, and it must actually run.
@@ -57,15 +76,60 @@ verify() {
   for h in secret-scan.sh pii-in-logs.sh sensitive-file-context.sh dangerous-pattern-warn.sh; do
     if [ -x "$GUARDRAILS_HOME/hooks/$h" ]; then echo "  ok   hook $h"; else echo "  MISS hook $h"; ok=1; fi
   done
+  for h in destructive-command-guard.py write-then-remote-guard.py chain-abort-guard.py shell-status-guard.py; do
+    if [ -f "$GUARDRAILS_HOME/hooks/$h" ]; then echo "  ok   hook $h"; else echo "  MISS hook $h"; ok=1; fi
+  done
   for h in secret-scan-git.py _bash_command_parse.py _bash_write_targets.py _pii_bash_lines.py _shell_secret_argv.py; do
     if [ -f "$GUARDRAILS_HOME/hooks/$h" ]; then echo "  ok   helper $h"; else echo "  MISS helper $h"; ok=1; fi
   done
   if [ -f "$MANAGED_FILE" ]; then echo "  ok   managed settings at $MANAGED_FILE"; else echo "  MISS managed settings at $MANAGED_FILE"; ok=1; fi
+  verify_registrations || ok=1
   command -v jq >/dev/null 2>&1 && echo "  ok   jq present" || { echo "  MISS jq (hooks need it)"; ok=1; }
   command -v gitleaks >/dev/null 2>&1 && echo "  ok   gitleaks present" || { echo "  MISS gitleaks (every commit and push is blocked until it is installed)"; ok=1; }
   local py; py=$(hook_python)
   if [ -n "$py" ] && "$py" -c 'import sys' >/dev/null 2>&1; then echo "  ok   python3 at $py"; else echo "  MISS a working python3 (tried ${py:-none})"; ok=1; fi
   return $ok
+}
+
+# Every hook must be REGISTERED, not just present: on the right event, with the right
+# matcher, run the right way. A Python hook is then run once through its registered command
+# on a harmless Bash call, which must exit 0, so a broken interpreter or path shows here.
+verify_registrations() {
+  local bad=0 entry event matcher kind name cmd
+  if ! command -v jq >/dev/null 2>&1 || [ ! -f "$MANAGED_FILE" ]; then
+    echo "  MISS hook registrations (need jq and the managed settings file to read them)"
+    return 1
+  fi
+  for entry in "${REGISTRATIONS[@]}"; do
+    name="${entry##*|}"
+    kind="${entry%|*}"; kind="${kind##*|}"
+    event="${entry%%|*}"
+    matcher="${entry#*|}"; matcher="${matcher%|*|*}"
+    if [ "$kind" = py ]; then
+      cmd="python3 $GUARDRAILS_HOME/hooks/$name"
+    else
+      cmd="$GUARDRAILS_HOME/hooks/$name"
+    fi
+    if jq -e --arg e "$event" --arg m "$matcher" --arg c "$cmd" \
+        '[.hooks[$e][]? | select(.matcher == $m) | .hooks[]? | select(.type == "command" and .command == $c)] | length == 1' \
+        "$MANAGED_FILE" >/dev/null 2>&1; then
+      echo "  ok   registered $event [$matcher] $name"
+    else
+      echo "  MISS registration $event [$matcher] $cmd"
+      bad=1
+      continue
+    fi
+    if [ "$kind" = py ] && [ "$matcher" = Bash ]; then
+      if printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/"}' \
+          | bash -c "$cmd" >/dev/null 2>&1; then
+        echo "  ok   runs     $name"
+      else
+        echo "  MISS runs     $name (its registered command did not exit 0 on a harmless call)"
+        bad=1
+      fi
+    fi
+  done
+  return $bad
 }
 
 require_root() {
@@ -92,14 +156,20 @@ preflight
 # Install hooks + standards (standards are read by the hooks' sibling skills and CI).
 mkdir -p "$GUARDRAILS_HOME/hooks" "$GUARDRAILS_HOME/standards"
 install -m 0755 "$REPO_DIR/hooks/"*.sh "$GUARDRAILS_HOME/hooks/"
-# The Python helpers the shell hooks call. Without secret-scan-git.py every commit and
-# push is blocked, because a scan that did not run must never read as a clean one.
+# The Python hooks (the four shell-safety guards) and the Python helpers the shell hooks
+# call. Without secret-scan-git.py every commit and push is blocked, because a scan that
+# did not run must never read as a clean one.
 install -m 0644 "$REPO_DIR/hooks/"*.py "$GUARDRAILS_HOME/hooks/"
 install -m 0644 "$REPO_DIR/standards/"* "$GUARDRAILS_HOME/standards/"
 
-# Install managed settings last: this is the step that turns the hooks on.
+# Install managed settings last: this is the step that turns the hooks on. The hook paths in
+# it are rewritten to GUARDRAILS_HOME, which is a no-op for a normal install.
 mkdir -p "$MANAGED_DIR"
-install -m 0644 "$REPO_DIR/settings/managed-settings.json" "$MANAGED_FILE"
+"$(hook_python)" -c 'import sys; s = open(sys.argv[1]).read(); open(sys.argv[2], "w").write(s.replace(sys.argv[3], sys.argv[4]))' \
+  "$REPO_DIR/settings/managed-settings.json" "$GUARDRAILS_HOME/managed-settings.rendered.json" \
+  "$DEFAULT_HOME" "$GUARDRAILS_HOME"
+install -m 0644 "$GUARDRAILS_HOME/managed-settings.rendered.json" "$MANAGED_FILE"
+rm -f "$GUARDRAILS_HOME/managed-settings.rendered.json"
 
 echo "Installed. Verifying:"
 verify || { echo "Verification reported missing items above." >&2; exit 1; }

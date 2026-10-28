@@ -26,7 +26,8 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
   a rule can be defended in an audit rather than only asserted.
 - `hooks/`, Claude Code hooks. `secret-scan.sh` and `pii-in-logs.sh` hard-block;
   `sensitive-file-context.sh` and `dangerous-pattern-warn.sh` warn/inject. Portable bash + jq,
-  POSIX grep classes (run on BSD and GNU grep).
+  POSIX grep classes (run on BSD and GNU grep). Four Python hooks check every shell command
+  before it runs (see "Shell-safety hooks" below).
 - `settings/`, `managed-settings.json` (enterprise policy, non-overridable) and `install.sh`
   (push via MDM with admin rights).
 - `ci/`, `security-privacy.yml` reusable GitHub Actions workflow, `.pre-commit-config.yaml`,
@@ -47,7 +48,9 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
    for `jq`, `gitleaks` and a working `python3` and installs nothing if one is missing. Then it
    installs hooks to `/usr/local/share/secure-dev-guardrails/` and, last, the managed-settings
    policy to the OS path so developers cannot disable the hard blocks. Verify with
-   `settings/install.sh --verify`.
+   `settings/install.sh --verify`, which checks that each hook is registered on the right
+   event and matcher with the right command, and runs each Python hook once on a harmless
+   call.
 2. **Skills:** copy `skills/<name>/` into the team's Claude Code skills directory. Apply the
    `skills/enhancements/*.md` changes to the existing code-review / security-review / spec review
    / architect skills. Copy `skills/_shared/` to `~/.claude/skills/_shared/` too: the four
@@ -81,6 +84,10 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
   content checks, size caps and where uploads are served from; migration and read-only
   accounts), and SEC-LOG-02 on forged log lines and security-event fields, are settled at
   review.
+- Shell commands (hook only): a block on commands that destroy uncommitted work, on `rm -rf`
+  outside temp and build folders, on a plain `git push --force`, and on calls where an early
+  refusal or failure skips a file write; warnings on exit statuses that cannot be the work's and
+  on zsh expansions that cancel a command. See "Shell-safety hooks" below.
 - CI-only (needs a toolchain): SAST across the OWASP packs, SCA for known CVEs, license checks,
   baseline-expiry enforcement.
 - Known exploited (SEC-DEP-04): `dependency-review` step 2b runs `ci/check-kev.py` over the
@@ -103,6 +110,58 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
   existing repository on adoption day is removed by whoever meets it late in the day, so the
   `pin_actions` input starts at `warn` and a team flips it to `block` once its backlog is clear.
   An accepted action goes in `standards/baseline.yml` with an owner and an expiry.
+
+## Shell-safety hooks
+
+Four PreToolUse hooks on `Bash`, in Python with no third-party packages. Each reads the
+command Claude Code is about to run and either blocks it (exit 2, the reason on stderr) or
+adds a warning to the session (exit 0, JSON on stdout). Every block names a bypass for the
+case where the command is intended: put the marker at the end of the command, unquoted. Never
+put a marker in a command a person runs in their own shell, where no hook reads it.
+
+- `destructive-command-guard.py` blocks `git reset --hard`, `git checkout -- <path>`,
+  `git restore <path>` (including `--staged --worktree`) and `git clean -f` when the target tree
+  has uncommitted changes, or when `git status` cannot be read there. It reads the git
+  subcommand after wrappers, `VAR=value` and git's own options (`git -c k=v reset --hard`), and
+  finds the tree from `git -C <path>` or an earlier `cd`, because with several sessions on one
+  repository a dirty file is often another session's live work. It also blocks `rm -rf`
+  outside the temp folders and regenerable build folders (the path is compared after `..` and
+  symlinks are resolved), `rm -rf` on an unset bare variable
+  or on the home folder, and a plain `git push --force`. The same discards on a clean tree,
+  `--force-with-lease`, `git branch -D`, `git stash`, Docker and SQL deletes, and inline
+  scripts that delete files only warn. A destructive string inside `grep` or `echo` is data,
+  unless the command pipes it into a shell. List shared repositories in `PROTECTED_REPOS` to
+  block resets and force-pushes there, on a clean tree too. Bypass: `#allow-destructive` or
+  `CLAUDE_ALLOW_DESTRUCTIVE=1`.
+- `write-then-remote-guard.py` blocks a call that creates a file and then, later in the same
+  call, reaches a remote URL, a hosting API, a credential loader, `gh`, or `git add`,
+  `commit` or `push`. When any part of a call is refused, nothing in it runs, so the file is
+  never written and the next command fails on a file that does not exist. It also blocks a
+  call that writes a script and then runs it when the script's body is the kind that gets
+  refused (`rm -rf`, `sudo`, `git push`, SQL deletes). Write the file in one call and use it in
+  the next. Add your own credential wrappers and hosts to `RISKY`. Bypass:
+  `#allow-combined-write` or `CLAUDE_ALLOW_COMBINED_WRITE=1`.
+- `chain-abort-guard.py` blocks a relative `cd` before a file write in an `&&` chain: the
+  shell's directory carries over between calls, so the `cd` can fail and the write is then
+  skipped. Each write is checked against its own `&&` chain. When zsh is the shell Claude Code
+  uses (`CLAUDE_CODE_SHELL`, then `SHELL`), it also warns on zsh expansions that cancel a
+  command before it runs: an unquoted glob before a write, a delete with two or more globs, an
+  unquoted `--include=*.py`, a word that starts with `=` (`echo ====`), and a glob that matches
+  nothing in the current folder.
+  Bypass: `#allow-chain-write` or `CLAUDE_ALLOW_CHAIN_WRITE=1`.
+- `shell-status-guard.py` warns when the status a command reports cannot be the status of the
+  work: `$?` read after a pipe into `tail` or `head`, a background command piped into a
+  display filter, work detached with a trailing `&` and no `wait`, a background or
+  long-running command whose output goes to a file in a chain that ends on `tail` or
+  `echo "EXIT=$?"`, a writer (`--apply`, `--push`) piped into
+  `tail`, a `timeout` that is not installed, and `codex exec` with stdin left open. Under zsh
+  it also warns on two zsh traps: `$NAME:path`, which zsh reads as a history modifier, and an
+  unquoted `$VAR`, which zsh does not split into words. It blocks a `while` or `until` loop that waits
+  on `pgrep -f` or `ps | grep`, because the waiting shell carries the same pattern and the loop
+  never ends. Bypass: `#allow-shell-status` or `CLAUDE_ALLOW_SHELL_STATUS=1`.
+
+Their tests are in `ci/tests/test_shell_safety_hooks_detections.py`, which runs with the other
+detection tests (`python3 ci/tests/run_detection_tests.py`).
 
 ## The honest limit
 

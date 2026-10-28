@@ -14,7 +14,11 @@
         "matcher": "Bash",
         "hooks": [
           { "type": "command", "command": "/usr/local/share/secure-dev-guardrails/hooks/secret-scan.sh" },
-          { "type": "command", "command": "/usr/local/share/secure-dev-guardrails/hooks/pii-in-logs.sh" }
+          { "type": "command", "command": "/usr/local/share/secure-dev-guardrails/hooks/pii-in-logs.sh" },
+          { "type": "command", "command": "python3 /usr/local/share/secure-dev-guardrails/hooks/destructive-command-guard.py" },
+          { "type": "command", "command": "python3 /usr/local/share/secure-dev-guardrails/hooks/write-then-remote-guard.py" },
+          { "type": "command", "command": "python3 /usr/local/share/secure-dev-guardrails/hooks/chain-abort-guard.py" },
+          { "type": "command", "command": "python3 /usr/local/share/secure-dev-guardrails/hooks/shell-status-guard.py" }
         ]
       }
     ],

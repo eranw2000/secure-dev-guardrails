@@ -16,6 +16,10 @@ other half.
 Every hook runs with HOME set to an empty folder, so nothing can be borrowed from an
 existing ~/.claude/hooks install. SHELL_HOOKS_DIR points the test at another hooks
 folder; pointing it at hooks that do nothing must turn this run red.
+
+SHELL is set to zsh for every run unless a case says otherwise, because several checks
+describe zsh behaviour and run only when zsh is the shell Claude Code uses; the cases
+that set SHELL to bash prove those checks stay quiet there.
 """
 
 from __future__ import annotations
@@ -53,7 +57,8 @@ def run_hook(hook: str, command: str, cwd: str, background: bool = False,
     envelope = {"tool_name": "Bash", "cwd": cwd,
                 "tool_input": {"command": command, "run_in_background": background}}
     env = {"HOME": FAKE_HOME, "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-           "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
+           "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null",
+           "SHELL": "/bin/zsh"}
     if env_extra:
         env.update(env_extra)
     proc = subprocess.run([sys.executable, str(path)], input=json.dumps(envelope),
@@ -131,6 +136,24 @@ def write_then_remote_cases(cwd: str) -> None:
     case("the bypass variable lets a blocked call through", h,
          "cat > msg.txt <<'EOF'\nx\nEOF\ngit commit -F msg.txt", QUIET, cwd,
          env_extra={"CLAUDE_ALLOW_COMBINED_WRITE": "1"})
+    case("a write then git add alone blocks", h,
+         "echo x > a.txt && git add a.txt", BLOCK, cwd)
+    case("a write then git commit alone blocks", h,
+         "echo x > a.txt && git commit -am msg", BLOCK, cwd)
+    case("a write then git status is quiet", h,
+         "echo x > a.txt && git status", QUIET, cwd)
+    case("a redirect with no space before it is a write", h,
+         "echo hi>output.txt && git push origin main", BLOCK, cwd, "output.txt")
+    case("a descriptor duplicate (>&2) is not a write", h,
+         "echo hi>&2 && git push origin main", QUIET, cwd)
+    case("git -C <dir> push after a write blocks", h,
+         "echo hi > output.txt && git -C /opt/project push origin main", BLOCK, cwd)
+    case("git -c k=v commit after a write blocks", h,
+         "echo hi > o.txt && git -c core.quotePath=false commit -m x", BLOCK, cwd)
+    case("a quoted example of the shape is data and is quiet", h,
+         'echo "example > output.txt; git push origin main"', QUIET, cwd)
+    case("a real push after a quoted > still blocks", h,
+         'echo "a > b" > notes.txt && git push origin main', BLOCK, cwd, "notes.txt")
 
 
 def chain_abort_cases(cwd: str) -> None:
@@ -156,6 +179,20 @@ def chain_abort_cases(cwd: str) -> None:
          "rm -f present_*.txt no_such_prefix_*.md", WARN, cwd, "TWO OR MORE unquoted globs")
     case("the bypass marker lets a blocked call through", h,
          "cd build && echo done > status.txt #allow-chain-write", QUIET, cwd)
+    case("a redirect with no space before it is still a write", h,
+         "cd build && echo done>status.txt", BLOCK, cwd)
+    case("a quoted > after a relative cd is an argument and is quiet", h,
+         'cd build && echo "a > b"', QUIET, cwd)
+    case("a later write after an independent first one is checked", h,
+         "echo ready > first.txt; cd build && echo done > second.txt", BLOCK, cwd)
+    case("a ; between the cd and the write ends the chain", h,
+         "cd build && true; echo done > status.txt", QUIET, cwd)
+    case("a pipeline stays in the chain: cd && make | tee log blocks", h,
+         "cd build && make | tee build.log", BLOCK, cwd)
+    case("under bash an unquoted --include=*.py is quiet (a zsh-only abort)", h,
+         "grep -rn needle --include=*.py .", QUIET, cwd, env_extra={"SHELL": "/bin/bash"})
+    case("under bash a relative cd before a write still blocks", h,
+         "cd build && echo done > status.txt", BLOCK, cwd, env_extra={"SHELL": "/bin/bash"})
 
 
 def shell_status_cases(cwd: str) -> None:
@@ -191,6 +228,35 @@ def shell_status_cases(cwd: str) -> None:
     case("the bypass marker lets a blocked call through", h,
          "while pgrep -f \"run_tests.py\" > /dev/null; do sleep 5; done #allow-shell-status",
          QUIET, cwd)
+    case("a quoted example of a wait loop is data and is quiet", h,
+         'echo "while pgrep -f run_tests.py; do sleep 5; done"', QUIET, cwd)
+    case("a real wait loop after a heredoc still blocks", h,
+         "cat > n.md <<'EOF'\nnotes\nEOF\nwhile pgrep -f run_tests.py; do sleep 5; done",
+         BLOCK, cwd, "matches ITSELF")
+    case("a pipe that ends a line still pipes into the next", h,
+         "python3 run_checks.py 2>&1 |\ntail -20\necho \"EXIT=$?\"", WARN, cwd,
+         "status belongs to that filter")
+    case("raw codex exec with stdin open warns", h,
+         'codex exec --sandbox read-only "$(cat prompt.md)"', WARN, cwd, "< /dev/null")
+    case("the same codex exec with stdin closed is quiet", h,
+         'codex exec --sandbox read-only "$(cat prompt.md)" < /dev/null', QUIET, cwd)
+    case("a timeout that is not installed warns", h,
+         "timeout 300 python3 run_checks.py", WARN, cwd, "not installed",
+         env_extra={"PATH": EMPTY_BIN})
+    case("a timeout that is installed is quiet", h,
+         "timeout 300 python3 run_checks.py", QUIET, cwd, env_extra={"PATH": TIMEOUT_BIN})
+    case("an unsplit $VAR under zsh warns", h,
+         'pair="alpha beta"; set -- $pair; echo $2', WARN, cwd, "does NOT split")
+    case("the same split on purpose with ${=VAR} is quiet", h,
+         'pair="alpha beta"; set -- ${=pair}; echo $2', QUIET, cwd)
+    case("the same unsplit $VAR under bash is quiet", h,
+         'pair="alpha beta"; set -- $pair; echo $2', QUIET, cwd,
+         env_extra={"SHELL": "/bin/bash"})
+    case("a backgrounded redirect ending on echo $? warns", h,
+         'python3 long_job.py > job.log 2>&1; echo "EXIT=$?"', WARN, cwd,
+         "NOT the work", background=True)
+    case("the same redirect in the foreground is quiet", h,
+         'python3 long_job.py > job.log 2>&1; echo "EXIT=$?"', QUIET, cwd)
 
 
 def destructive_cases(cwd: str, dirty: str, clean: str) -> None:
@@ -220,6 +286,60 @@ def destructive_cases(cwd: str, dirty: str, clean: str) -> None:
          "git push --force-with-lease origin feature", WARN, clean)
     case("the bypass marker lets a blocked call through", h,
          "rm -rf /opt/project/src #allow-destructive", QUIET, cwd)
+    case("git restore --staged --worktree restores the tree and blocks", h,
+         "git restore --staged --worktree tracked.py", BLOCK, dirty)
+    case("`command git reset --hard` in a dirty tree blocks", h,
+         "command git reset --hard", BLOCK, dirty)
+    case("an env assignment before git reset --hard blocks", h,
+         "GIT_OPTIONAL_LOCKS=0 git reset --hard", BLOCK, dirty)
+    case("git -c k=v before reset --hard blocks", h,
+         "git -c core.quotePath=false reset --hard", BLOCK, dirty)
+    case("git -c k=v before a read is quiet", h,
+         "git -c core.quotePath=false status", QUIET, dirty)
+    case("rm -rf /tmp/../<path> leaves /tmp and blocks", h,
+         "rm -rf /tmp/../opt/project/src", BLOCK, cwd)
+    case("rm -rf /tmp/a/../b stays under /tmp and is quiet", h,
+         "rm -rf /tmp/build/../cache", QUIET, cwd)
+    case("git reset --hard where git status cannot be read blocks", h,
+         "git reset --hard", BLOCK, NOT_A_REPO, "could not read")
+    case("git branch -D warns", h, "git branch -D feature/x", WARN, clean, "reflog")
+    case("git stash warns", h, "git stash", WARN, clean, "stash")
+    case("git stash list is quiet", h, "git stash list", QUIET, clean)
+
+
+def protected_repo_cases(root: Path, clean_name: str) -> None:
+    """PROTECTED_REPOS ships empty; a copy with one name in it must block a clean reset."""
+    global HOOKS
+    src = (HOOKS / DESTRUCTIVE).read_text()
+    marker = "PROTECTED_REPOS = []"
+    if src.count(marker) != 1:
+        results.append(("protected repos: the shipped list was found", False,
+                        "expected one `%s` line in %s" % (marker, DESTRUCTIVE)))
+        return
+    copy_dir = root / "protected_hooks"
+    copy_dir.mkdir()
+    for f in HOOKS.glob("*.py"):
+        (copy_dir / f.name).write_text(f.read_text())
+    (copy_dir / DESTRUCTIVE).write_text(
+        src.replace(marker, "PROTECTED_REPOS = [%r]" % clean_name))
+    saved, HOOKS = HOOKS, copy_dir
+    try:
+        case("a protected repo blocks reset --hard even on a clean tree", DESTRUCTIVE,
+             "git reset --hard", BLOCK, str(root / clean_name), "shared repository")
+        case("the same reset in another clean repo only warns", DESTRUCTIVE,
+             "git reset --hard", WARN, str(root / "clean_repo"), "tree is clean")
+    finally:
+        HOOKS = saved
+
+
+# A PATH with no `timeout` at all, and one whose `timeout` is a stub, so the
+# missing-timeout check reads the same on every machine.
+EMPTY_BIN = tempfile.mkdtemp(prefix="shell-hooks-nobin-")
+TIMEOUT_BIN = tempfile.mkdtemp(prefix="shell-hooks-timeoutbin-")
+Path(TIMEOUT_BIN, "timeout").write_text("#!/bin/sh\nexit 0\n")
+os.chmod(Path(TIMEOUT_BIN, "timeout"), 0o755)
+# A folder that is not inside any git repository, so `git status` fails there.
+NOT_A_REPO = tempfile.mkdtemp(prefix="shell-hooks-norepo-")
 
 
 def main() -> int:
@@ -234,8 +354,11 @@ def main() -> int:
         chain_abort_cases(cwd)
         shell_status_cases(cwd)
         destructive_cases(cwd, dirty, clean)
+        git_repo(work, "shared_repo", dirty=False)
+        protected_repo_cases(work, "shared_repo")
     finally:
-        subprocess.run(["rm", "-rf", str(work), FAKE_HOME])
+        subprocess.run(["rm", "-rf", str(work), FAKE_HOME, EMPTY_BIN, TIMEOUT_BIN,
+                        NOT_A_REPO])
 
     bad = 0
     for name, ok, detail in results:
@@ -244,7 +367,7 @@ def main() -> int:
             bad += 1
             print("        " + detail.strip().replace("\n", "\n        ")[:600])
     print(f"--- shell-safety hooks: {len(results) - bad}/{len(results)} ---")
-    if len(results) < 49:
+    if len(results) < 90:
         print("FAIL: fewer cases ran than are written here; the runner is broken")
         return 1
     return 1 if bad else 0

@@ -51,8 +51,40 @@ check "all present: the secret-scan hook installed" "$([ -x "$TMP/home2/hooks/se
 check "all present: the parser helper installed" "$([ -f "$TMP/home2/hooks/_bash_command_parse.py" ] && echo yes || echo no)" yes
 for h in destructive-command-guard.py write-then-remote-guard.py chain-abort-guard.py shell-status-guard.py; do
   check "all present: $h installed" "$([ -f "$TMP/home2/hooks/$h" ] && echo yes || echo no)" yes
-  check "all present: managed settings run $h on Bash" "$(jq -r --arg h "$h" '[.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command | select(endswith("/hooks/" + $h))] | length' "$TMP/managed2/managed-settings.json")" 1
+  check "all present: managed settings run $h on Bash through python3" "$(jq -r --arg c "python3 $TMP/home2/hooks/$h" '[.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | select(.type == "command" and .command == $c)] | length' "$TMP/managed2/managed-settings.json")" 1
 done
+
+run_verify() { # <bindir> <home> <managed>
+  env -i HOME="$TMP" PATH="$1" SDG_GUARDRAILS_HOME="$2" SDG_MANAGED_DIR="$3" \
+    bash "$INSTALLER" --verify > "$TMP/vout" 2>&1
+}
+
+# --- --verify reads the REGISTRATIONS, not just the files
+run_verify "$B" "$TMP/home2" "$TMP/managed2"; rc=$?
+check "verify on a good install succeeds" "$rc" 0
+check "verify names each Python hook as registered and running" "$(grep -c '^  ok   runs ' "$TMP/vout" | tr -d ' ')" 4
+check "verify checks all ten registrations" "$(grep -c '^  ok   registered ' "$TMP/vout" | tr -d ' ')" 10
+
+M="$TMP/managed2/managed-settings.json"
+cp "$M" "$TMP/good.json"
+jq --arg c "python3 $TMP/home2/hooks/chain-abort-guard.py" '.hooks.PreToolUse |= map(.hooks |= map(select(.command != $c)))' "$TMP/good.json" > "$M"
+run_verify "$B" "$TMP/home2" "$TMP/managed2"; rc=$?
+check "verify fails when a hook file is present but unregistered" "$rc" 1
+check "verify names the missing registration" "$(grep -c 'MISS registration PreToolUse \[Bash\] python3 .*chain-abort-guard.py' "$TMP/vout" | tr -d ' ')" 1
+
+jq --arg c "python3 $TMP/home2/hooks/shell-status-guard.py" --arg n "$TMP/home2/hooks/shell-status-guard.py" '.hooks.PreToolUse |= map(.hooks |= map(if .command == $c then .command = $n else . end))' "$TMP/good.json" > "$M"
+run_verify "$B" "$TMP/home2" "$TMP/managed2"; rc=$?
+check "verify fails when a Python hook is registered without python3" "$rc" 1
+
+jq --arg c "python3 $TMP/home2/hooks/destructive-command-guard.py" '.hooks.PostToolUse += [{"matcher": "Bash", "hooks": [{"type": "command", "command": $c}]}] | .hooks.PreToolUse |= map(.hooks |= map(select(.command != $c)))' "$TMP/good.json" > "$M"
+run_verify "$B" "$TMP/home2" "$TMP/managed2"; rc=$?
+check "verify fails when a hook sits on the wrong event" "$rc" 1
+
+cp "$TMP/good.json" "$M"
+printf 'raise SystemExit(3)\n' > "$TMP/home2/hooks/write-then-remote-guard.py"
+run_verify "$B" "$TMP/home2" "$TMP/managed2"; rc=$?
+check "verify fails when a registered hook does not run cleanly" "$rc" 1
+check "verify names the hook that did not run" "$(grep -c 'MISS runs     write-then-remote-guard.py' "$TMP/vout" | tr -d ' ')" 1
 
 echo
 echo "selftest: $PASS passed, $FAIL failed"

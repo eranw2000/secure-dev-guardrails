@@ -48,7 +48,9 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
    for `jq`, `gitleaks` and a working `python3` and installs nothing if one is missing. Then it
    installs hooks to `/usr/local/share/secure-dev-guardrails/` and, last, the managed-settings
    policy to the OS path so developers cannot disable the hard blocks. Verify with
-   `settings/install.sh --verify`.
+   `settings/install.sh --verify`, which checks that each hook is registered on the right
+   event and matcher with the right command, and runs each Python hook once on a harmless
+   call.
 2. **Skills:** copy `skills/<name>/` into the team's Claude Code skills directory. Apply the
    `skills/enhancements/*.md` changes to the existing code-review / security-review / spec review
    / architect skills. Copy `skills/_shared/` to `~/.claude/skills/_shared/` too: the four
@@ -118,15 +120,18 @@ case where the command is intended: put the marker at the end of the command, un
 put a marker in a command a person runs in their own shell, where no hook reads it.
 
 - `destructive-command-guard.py` blocks `git reset --hard`, `git checkout -- <path>`,
-  `git restore <path>` and `git clean -f` when the target tree has uncommitted changes. It
+  `git restore <path>` (including `--staged --worktree`) and `git clean -f` when the target tree
+  has uncommitted changes, or when `git status` cannot be read there. It reads the git
+  subcommand after wrappers, `VAR=value` and git's own options (`git -c k=v reset --hard`), and
   finds the tree from `git -C <path>` or an earlier `cd`, because with several sessions on one
   repository a dirty file is often another session's live work. It also blocks `rm -rf`
-  outside the temp folders and regenerable build folders, `rm -rf` on an unset bare variable
+  outside the temp folders and regenerable build folders (the path is compared after `..` and
+  symlinks are resolved), `rm -rf` on an unset bare variable
   or on the home folder, and a plain `git push --force`. The same discards on a clean tree,
   `--force-with-lease`, `git branch -D`, `git stash`, Docker and SQL deletes, and inline
   scripts that delete files only warn. A destructive string inside `grep` or `echo` is data,
   unless the command pipes it into a shell. List shared repositories in `PROTECTED_REPOS` to
-  block resets and force-pushes there. Bypass: `#allow-destructive` or
+  block resets and force-pushes there, on a clean tree too. Bypass: `#allow-destructive` or
   `CLAUDE_ALLOW_DESTRUCTIVE=1`.
 - `write-then-remote-guard.py` blocks a call that creates a file and then, later in the same
   call, reaches a remote URL, a hosting API, a credential loader, `gh`, or `git add`,
@@ -138,18 +143,20 @@ put a marker in a command a person runs in their own shell, where no hook reads 
   `#allow-combined-write` or `CLAUDE_ALLOW_COMBINED_WRITE=1`.
 - `chain-abort-guard.py` blocks a relative `cd` before a file write in an `&&` chain: the
   shell's directory carries over between calls, so the `cd` can fail and the write is then
-  skipped. It warns on zsh expansions that cancel a command before it runs: an unquoted glob
-  before a write, a delete with two or more globs, an unquoted `--include=*.py`, a word that
-  starts with `=` (`echo ====`), and a glob that matches nothing in the current folder.
+  skipped. Each write is checked against its own `&&` chain. When zsh is the shell Claude Code
+  uses (`CLAUDE_CODE_SHELL`, then `SHELL`), it also warns on zsh expansions that cancel a
+  command before it runs: an unquoted glob before a write, a delete with two or more globs, an
+  unquoted `--include=*.py`, a word that starts with `=` (`echo ====`), and a glob that matches
+  nothing in the current folder.
   Bypass: `#allow-chain-write` or `CLAUDE_ALLOW_CHAIN_WRITE=1`.
 - `shell-status-guard.py` warns when the status a command reports cannot be the status of the
   work: `$?` read after a pipe into `tail` or `head`, a background command piped into a
   display filter, work detached with a trailing `&` and no `wait`, a background or
   long-running command whose output goes to a file in a chain that ends on `tail` or
   `echo "EXIT=$?"`, a writer (`--apply`, `--push`) piped into
-  `tail`, a `timeout` that is not installed, and `codex exec` with stdin left open. It also
-  warns on two zsh traps: `$NAME:path`, which zsh reads as a history modifier, and an unquoted
-  `$VAR`, which zsh does not split into words. It blocks a `while` or `until` loop that waits
+  `tail`, a `timeout` that is not installed, and `codex exec` with stdin left open. Under zsh
+  it also warns on two zsh traps: `$NAME:path`, which zsh reads as a history modifier, and an
+  unquoted `$VAR`, which zsh does not split into words. It blocks a `while` or `until` loop that waits
   on `pgrep -f` or `ps | grep`, because the waiting shell carries the same pattern and the loop
   never ends. Bypass: `#allow-shell-status` or `CLAUDE_ALLOW_SHELL_STATUS=1`.
 

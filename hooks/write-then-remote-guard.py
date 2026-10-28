@@ -34,6 +34,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+try:
+    from _bash_command_parse import git_call, split_segments, strip_prefixes, tokenize
+except Exception:  # noqa: BLE001 - without the helper the text fallback below runs
+    tokenize = None
+
 BYPASS_MARKER = "#allow-combined-write"
 
 # A clause that CREATES a file: a heredoc, a redirect to a path, or tee.
@@ -61,8 +66,66 @@ _STDIN_MESSAGE = re.compile(
 )
 
 
-def creates_a_file(segment):
+# Redirect operators as the tokenizer returns them. `>&` and `<&` duplicate a
+# descriptor (`>&2`) and create nothing, so they are not here.
+_REDIRECT_OPS = {">", ">>", ">|", "&>", "&>>"}
+
+
+def _command_words(tokens):
+    """The clause's words from its command word on: wrappers and `(`/`{` dropped."""
+    words = strip_prefixes(tokens)
+    while words and words[0] in ("(", "{"):
+        words = strip_prefixes(words[1:])
+    return words
+
+
+def _stdin_message(tokens):
+    """True when a heredoc on this clause is a message read from stdin (`-F -`)."""
+    call = git_call(tokens)
+    if call and call["subcommand"] in ("commit", "tag"):
+        args = call["args"]
+        for i, tok in enumerate(args):
+            if tok in ("-F", "--file") and i + 1 < len(args) and args[i + 1] == "-":
+                return True
+            if tok in ("-F=-", "--file=-"):
+                return True
+    words = _command_words(tokens)
+    if words and os.path.basename(words[0]) == "gh":
+        for i, tok in enumerate(words):
+            if tok == "--body-file" and i + 1 < len(words) and words[i + 1] == "-":
+                return True
+            if tok == "--body-file=-":
+                return True
+    return False
+
+
+def written_by_tokens(tokens):
+    """Paths this clause creates, read from the parse: a redirect target or a tee file.
+
+    The parse is what makes `echo hi>out.txt` a write (no space is needed before
+    `>`) and `echo "a > b"` not one (the `>` is inside an argument).
+    """
+    out = []
+    for i, tok in enumerate(tokens):
+        if tok in _REDIRECT_OPS and i + 1 < len(tokens):
+            target = tokens[i + 1]
+            if target and not _DISCARD.match(target):
+                out.append(target)
+    words = _command_words(tokens)
+    if words and os.path.basename(words[0]) == "tee":
+        out.extend(w for w in words[1:] if not w.startswith("-"))
+    return out
+
+
+def creates_a_file(segment, tokens=None):
     """True when this clause brings a file into existence that a refusal loses."""
+    if tokens is not None:
+        if written_by_tokens(tokens):
+            return True
+        words = _command_words(tokens)
+        if words and os.path.basename(words[0]) == "tee":
+            return True
+        return "<<" in tokens and not _stdin_message(tokens)
     for m in WRITE.finditer(segment):
         if m.group(0).lstrip().startswith("<<"):
             if _STDIN_MESSAGE.match(segment):
@@ -80,10 +143,24 @@ def creates_a_file(segment):
 # your own wrappers, and add your production hosts to the second line.
 RISKY = re.compile(
     r"with_prod_creds"                                        # credential loaders
-    r"|api\.render\.com|onrender\.com"                        # hosting APIs
-    r"|curl\s+[^|;]*https?://(?!127\.0\.0\.1|localhost)"      # any non-local fetch
-    r"|(?:^|[\s;&|(])gh\s+(?:pr|api|repo|issue)\b"            # GitHub writes
-    r"|(?:^|[\s;&|(])git\s+(?:push|commit|add)\b",            # moving a repo
+    r"|api\.render\.com|onrender\.com",                       # hosting APIs
+    re.I,
+)
+
+# The COMMANDS that reach out are read from the parse, so a quoted example
+# (`echo "... git push"`) is data, and `git -C <dir> push` / `git -c k=v commit`
+# are still git: a non-local `curl`, a GitHub write with `gh`, and a git
+# push, commit or add.
+_NONLOCAL_URL = re.compile(r"https?://(?!127\.0\.0\.1|localhost)", re.I)
+_GH_WRITES = ("pr", "api", "repo", "issue")
+_GIT_MOVES = ("push", "commit", "add")
+
+# Used only when the command cannot be tokenized (an unbalanced quote).
+_REACH_TEXT = re.compile(
+    r"curl\s+[^|;]*https?://(?!127\.0\.0\.1|localhost)"
+    r"|(?:^|[\s;&|(])gh\s+(?:pr|api|repo|issue)\b"
+    r"|(?:^|[\s;&|(])git\s+(?:-[Cc]\s+\S+\s+|--[\w-]+(?:=\S*)?\s+|-[^Cc\s-]\S*\s+)*"
+    r"(?:push|commit|add)\b",
     re.I,
 )
 
@@ -94,8 +171,23 @@ RISKY = re.compile(
 _RENDER_CLI = re.compile(r"^\s*\(?\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*render\s", re.I)
 
 
-def reaches_out(segment):
-    return bool(RISKY.search(segment) or _RENDER_CLI.match(segment))
+def reaches_out(segment, tokens=None):
+    if RISKY.search(segment):
+        return True
+    if tokens is None:
+        return bool(_REACH_TEXT.search(segment) or _RENDER_CLI.match(segment))
+    words = _command_words(tokens)
+    if not words:
+        return False
+    head = os.path.basename(words[0]).lower()
+    if head == "render":
+        return True
+    if head == "curl" and any(_NONLOCAL_URL.search(w) for w in words[1:]):
+        return True
+    if head == "gh" and len(words) > 1 and words[1] in _GH_WRITES:
+        return True
+    call = git_call(words)
+    return bool(call) and call["subcommand"] in _GIT_MOVES
 
 
 # ---------------------------------------------------------------------------
@@ -142,62 +234,94 @@ def written_targets(segment):
     return out
 
 
+_INTERPRETERS = ("bash", "sh", "zsh", "python", "python3", "node", "ruby", "perl",
+                 "source", ".")
+
+
+def ran_by_tokens(tokens):
+    """The script file this clause runs, read from the parse, or None."""
+    words = _command_words(tokens)
+    if not words:
+        return None
+    if words[0].startswith("./"):
+        return words[0]
+    if os.path.basename(words[0]) in _INTERPRETERS:
+        for w in words[1:]:
+            if not w.startswith("-"):
+                return w
+    return None
+
+
 def self_execution_verdict(command):
     """Return (write clause, run clause) when this call writes a script whose
     body looks refusable and then executes that same script."""
     try:
         from _bash_write_targets import strip_heredocs
-        stripped, bodies = strip_heredocs(command)
+        _stripped, bodies = strip_heredocs(command)
     except Exception:
         return None
     if not bodies or not REFUSABLE_BODY.search("\n".join(bodies)):
         return None
 
-    segs = re.split(r"&&|\|\||[;|]|\n", stripped)
+    segs = segments(command)
     written = {}
-    for i, seg in enumerate(segs):
-        for target in written_targets(seg):
+    for i, (text, tokens) in enumerate(segs):
+        targets = written_by_tokens(tokens) if tokens is not None else written_targets(text)
+        for target in targets:
             written.setdefault(os.path.basename(target), i)
     if not written:
         return None
 
-    for i, seg in enumerate(segs):
-        for m in _RUNNER.finditer(seg):
-            ran = (m.group(1) or m.group(2) or "").strip("'\"")
+    for i, (text, tokens) in enumerate(segs):
+        if tokens is not None:
+            ran_list = [ran_by_tokens(tokens)]
+        else:
+            ran_list = [(m.group(1) or m.group(2) or "").strip("'\"")
+                        for m in _RUNNER.finditer(text)]
+        for ran in ran_list:
             if not ran:
                 continue
             first_write = written.get(os.path.basename(ran))
             if first_write is not None and first_write < i:
-                return segs[first_write].strip(), seg.strip()
+                return segs[first_write][0].strip(), text.strip()
     return None
 
 
 def segments(command):
-    """The command split into clauses, with heredoc BODIES removed first.
+    """The command split into clauses, as (text, tokens), heredoc BODIES removed first.
 
     Stripping bodies matters in both directions: a script body mentioning a
     production URL must not count as the command calling it, and a body
     containing `>` must not be read as a redirect.
+
+    The split is a QUOTE-AWARE parse, so `echo "a > b; git push"` is one clause
+    with one argument. When the text cannot be tokenized (an unbalanced quote),
+    tokens is None and the clause is read from its text instead.
     """
     try:
         from _bash_write_targets import strip_heredocs
         stripped, _bodies = strip_heredocs(command)
     except Exception:
         stripped = command
-    return re.split(r"&&|\|\||[;|]|\n", stripped)
+    if tokenize is not None:
+        try:
+            return [(" ".join(t), t) for t in split_segments(tokenize(stripped))]
+        except Exception:  # noqa: BLE001 - fall back to the text split below
+            pass
+    return [(s, None) for s in re.split(r"&&|\|\||[;|]|\n", stripped)]
 
 
 def verdict(command):
     """Return the offending (write clause, risky clause) pair, or None."""
     segs = segments(command)
-    writes = [i for i, s in enumerate(segs) if creates_a_file(s)]
-    risky = [i for i, s in enumerate(segs) if reaches_out(s)]
+    writes = [i for i, (s, t) in enumerate(segs) if creates_a_file(s, t)]
+    risky = [i for i, (s, t) in enumerate(segs) if reaches_out(s, t)]
     if not writes or not risky:
         return None
     first_write, last_risky = min(writes), max(risky)
     if first_write >= last_risky:
         return None
-    return segs[first_write].strip(), segs[last_risky].strip()
+    return segs[first_write][0].strip(), segs[last_risky][0].strip()
 
 
 def main():

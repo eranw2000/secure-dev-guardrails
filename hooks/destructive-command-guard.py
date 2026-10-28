@@ -351,12 +351,87 @@ def git_target_dir(segment, seg_cwd, segments, index):
     return target
 
 
+# git global options that take the NEXT word as their value. Everything else that
+# starts with `-` before the subcommand is a flag on its own (`--no-pager`, `-p`,
+# `--git-dir=x`).
+GIT_GLOBAL_VALUE_OPTS = ("-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                         "--config-env", "--super-prefix")
+
+
+def git_words(segment):
+    """The segment as `["git", <subcommand>, <args>...]`, or None when it is not git.
+
+    Wrappers (`command`, `sudo`, `env`, `VAR=value`), a full path to the binary and
+    git's own global options (`-c k=v`, `-C dir`, `--no-pager`) all sit between the
+    start of the segment and the subcommand. Every git rule below reads THIS form,
+    so none of them can be stepped round by a prefix.
+    """
+    tokens = strip_prefixes(segment).split()
+    while tokens and tokens[0] in ("(", "{"):
+        tokens.pop(0)
+    if not tokens or os.path.basename(tokens[0].strip("'\"")) != "git":
+        return None
+    i = 1
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in GIT_GLOBAL_VALUE_OPTS:
+            i += 2
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        break
+    return ["git"] + [t.strip("'\"") for t in tokens[i:]]
+
+
+def git_text(segment):
+    """`git <subcommand> <args>` for a git segment, else the prefix-stripped segment."""
+    words = git_words(segment)
+    return " ".join(words) if words else strip_prefixes(segment)
+
+
+def restore_keeps_worktree(words):
+    """True only when a `git restore` provably leaves the working tree alone.
+
+    git's own manual (git help restore, -W/-S): "If neither option is specified,
+    by default the working tree is restored. Specifying --staged will only restore
+    the index. Specifying both restores both." So the SAFE side is exactly: the
+    index is named and the working tree is not. Short flags cluster (`-SW`), so a
+    cluster is read letter by letter.
+    """
+    staged = worktree = False
+    for tok in words[2:]:
+        if tok == "--":
+            break
+        if tok == "--staged":
+            staged = True
+        elif tok == "--worktree":
+            worktree = True
+        elif tok.startswith("-") and not tok.startswith("--"):
+            letters = tok[1:]
+            staged = staged or "S" in letters
+            worktree = worktree or "W" in letters
+    return staged and not worktree
+
+
 def under_safe_root(path):
+    """True when `path`, with every `..` resolved, sits under a safe root.
+
+    The path is compared as the system will walk it: every `..` folded and every
+    symlink followed, against roots resolved the same way. So `/tmp/../opt` is
+    outside, a symlink under /tmp pointing at a source tree is outside, and macOS
+    `/tmp` (really `/private/tmp`) still matches its own root.
+    """
     p = os.path.expanduser(path.strip("'\""))
     if not os.path.isabs(p):
         return False
+    real = os.path.realpath(p)
+    # The unset-TMPDIR placeholder holds a NUL, which realpath refuses.
     for root in SAFE_ROOTS:
-        if p == root.rstrip("/") or p.startswith(root.rstrip("/") + "/"):
+        if "\x00" in root:
+            continue
+        r = os.path.realpath(root.rstrip("/") or "/")
+        if real == r or real.startswith(r.rstrip("/") + "/"):
             return True
     return False
 
@@ -474,16 +549,43 @@ def check_segment(seg, cwd, all_segs, idx, piped_to_interpreter=False):
     # guard asks about the tree as well.
     seg_cwd = git_target_dir(seg, seg_cwd, all_segs, idx) or seg_cwd
 
+    # Every git rule reads the canonical `git <subcommand> ...` form, so a wrapper,
+    # an assignment or a git global option in front cannot hide the subcommand.
+    words = git_words(seg)
+    gseg = git_text(seg)
+
+    # 0. Anything tree- or history-shaped inside a protected repository. Asked
+    # FIRST: a clean tree only lowers a discard to a warning, and in a shared
+    # repository that warning would wave the reset through.
+    if words and PROTECTED_REPOS and re.search(
+            r"^git\s+(reset|push\b.*(--force|-f\b)|filter-branch|filter-repo)", gseg):
+        repo_name = os.path.basename(git_repo_root(seg_cwd) or "")
+        if repo_name in PROTECTED_REPOS:
+            return "block", (
+                repo_name + " is a shared repository where someone else's branch lives, "
+                "so a reset or a force-push there can destroy work that is not yours.\n"
+                "Merge instead, or re-run with " + BYPASS_MARKER + " if you have agreed it.")
+
     # 1. Working-tree discards. Blocks only when there is something to lose.
     discard_reason = None
-    for rx, why in TREE_DISCARD:
-        if rx.search(seg):
-            discard_reason = why
-            break
-    if discard_reason is None and RESTORE_RE.search(seg) and "--staged" not in seg:
-        discard_reason = "git restore <path> overwrites that path from the index, with no undo"
+    if words:
+        for rx, why in TREE_DISCARD:
+            if rx.search(gseg):
+                discard_reason = why
+                break
+        if discard_reason is None and RESTORE_RE.search(gseg) \
+                and not restore_keeps_worktree(words):
+            discard_reason = "git restore <path> overwrites that path from the index, with no undo"
     if discard_reason:
         dirty = dirty_files(seg_cwd)
+        if dirty is None:
+            # An unknown status is not a clean tree. `git status` failed or timed
+            # out, so there may be uncommitted work this command would destroy.
+            return "block", (
+                discard_reason + ".\nThe guard could not read `git status` at " + seg_cwd
+                + ", so it cannot tell whether uncommitted work is at risk.\n"
+                "Run `git status` yourself first, then re-run with " + BYPASS_MARKER
+                + " once you are sure.")
         if dirty:
             listed = ", ".join(d[3:].strip() for d in dirty[:4])
             more = "" if len(dirty) <= 4 else " and %d more" % (len(dirty) - 4)
@@ -507,6 +609,10 @@ def check_segment(seg, cwd, all_segs, idx, piped_to_interpreter=False):
             raw = t.strip("'\"")
             resolved, fully = expand_vars(raw, seg_vars)
             expanded = os.path.expanduser(resolved)
+            # `..` is folded before any decision, so `/tmp/..` is the root and
+            # `node_modules/../src` is `src`.
+            if expanded:
+                expanded = os.path.normpath(expanded)
 
             # ORDER IS LOAD-BEARING. The unresolvable and catastrophic cases are
             # decided BEFORE any allowlist, so a path the guard could not resolve is
@@ -541,32 +647,24 @@ def check_segment(seg, cwd, all_segs, idx, piped_to_interpreter=False):
                 "If this is genuinely intended, re-run with " + BYPASS_MARKER + ".")
 
     # 3. A plain --force push. --force-with-lease is handled in the warn band.
-    if re.search(r"^git\s+(?:-C\s+\S+\s+)?push\b", seg) and \
-            re.search(r"(--force(?!-with-lease)|(?<!\S)-f(?!\S))", seg):
+    if re.search(r"^git\s+push\b", gseg) and \
+            re.search(r"(--force(?!-with-lease)|(?<!\S)-f(?!\S))", gseg):
         return "block", (
             "git push --force can overwrite commits someone else pushed, and on a "
             "shared branch that loss is not yours to undo.\n"
             "Use --force-with-lease, which refuses when the remote moved under you.")
 
-    # 4. Anything tree- or history-shaped inside a protected repository.
-    root = git_repo_root(seg_cwd) or ""
-    repo_name = os.path.basename(root)
-    if repo_name in PROTECTED_REPOS and re.search(
-            r"^git\s+(?:-C\s+\S+\s+)?(reset|push\b.*(--force|-f\b)|filter-branch|filter-repo)", seg):
-        return "block", (
-            repo_name + " is a shared repository where someone else's branch lives, "
-            "so a reset or a force-push there can destroy work that is not yours.\n"
-            "Merge instead, or re-run with " + BYPASS_MARKER + " if you have agreed it.")
+    # 4. The protected-repository rule is step 0 above, before any warning.
 
     # 5. Destructive filesystem calls hidden in an inline script or heredoc.
     if re.search(r"(python3?|node|ruby|perl)\s+(-c|-e)\b", seg) or "<<" in seg:
         if INLINE_DESTRUCTIVE.search(seg):
             return "warn", (
-                "an inline script deletes files, which no command-level check can "
-                "see once it is inside the interpreter; confirm the path it targets")
+                "an inline script deletes files; confirm the path it targets "
+                "before relying on the result")
 
     for rx, why in WARN_RULES:
-        if rx.search(seg):
+        if rx.search(gseg if words else seg):
             return "warn", why
 
     if re.search(r"\b(dd\s+if=|mkfs|shred)\b", seg):
@@ -646,9 +744,8 @@ def main():
     for body in inline_bodies:
         if INLINE_DESTRUCTIVE.search(body):
             warns.append(("(heredoc script)",
-                          "an inline script deletes files, which no command-level "
-                          "check can see once it is inside the interpreter; confirm "
-                          "the path it targets"))
+                          "an inline script deletes files; confirm the path it "
+                          "targets before relying on the result"))
 
     if blocks:
         seg, reason = blocks[0]

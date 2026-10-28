@@ -67,6 +67,66 @@ _WRITE = re.compile(
 # Split on operator text, keeping the operator that joins each clause to the next.
 _SPLIT = re.compile(r"(\|\||&&|;|\||&|\n)")
 
+# Redirect operators as the tokenizer returns them. `>&` duplicates a descriptor
+# (`>&2`) and creates no file, so it is not here.
+_REDIRECT_OPS = {">", ">>", ">|", "&>", "&>>"}
+
+
+def writes_file(text):
+    """True when this clause redirects into a file or runs tee.
+
+    Read from the QUOTE-AWARE parse, so `echo done>status.txt` is a write (no space
+    is needed before `>`) and `echo "a > b"` is not (the `>` is inside an argument).
+    A clause that will not tokenize is read with the `_WRITE` pattern instead.
+    """
+    try:
+        from _bash_command_parse import strip_prefixes, tokenize
+        tokens = tokenize(text)
+    except Exception:  # noqa: BLE001 - unbalanced quotes or a missing helper
+        return bool(_WRITE.search(text))
+    for i, tok in enumerate(tokens):
+        if tok in _REDIRECT_OPS and i + 1 < len(tokens):
+            return True
+    words = strip_prefixes(tokens)
+    while words and words[0] in ("(", "{"):
+        words = strip_prefixes(words[1:])
+    return bool(words) and os.path.basename(words[0]) == "tee"
+
+
+def tool_shell(environ=None):
+    """The shell Claude Code's Bash tool runs commands in, "zsh" or "bash".
+
+    Claude Code docs, env-vars page, CLAUDE_CODE_SHELL: "If the value is not a working
+    `bash` or `zsh` path, Claude Code ignores it and falls back to auto-detection.
+    Auto-detection uses your `$SHELL` when it points to `bash` or `zsh`, otherwise it
+    picks the first working `zsh` then `bash` found on your `PATH` and standard
+    install locations." The glob and `=word` arms describe zsh behaviour, so they run
+    only when zsh is the shell.
+    """
+    env = os.environ if environ is None else environ
+    forced = env.get("CLAUDE_CODE_SHELL") or ""
+    if os.path.basename(forced) in ("zsh", "bash") and os.access(forced, os.X_OK):
+        return os.path.basename(forced)
+    name = os.path.basename(env.get("SHELL") or "")
+    if name in ("zsh", "bash"):
+        return name
+    import shutil
+    return "zsh" if shutil.which("zsh") else "bash"
+
+
+def chained(cl):
+    """The clauses with a line break after `&&`, `||` or `|` folded away.
+
+    `cd x &&` at the end of a line continues the same list on the next line, so the
+    empty clause the split leaves there must not end the chain.
+    """
+    out = []
+    for text, op in cl:
+        if not text.strip() and out and out[-1][1] in ("&&", "||", "|"):
+            continue
+        out.append((text, op))
+    return out
+
 
 def _strip_heredocs(command):
     try:
@@ -619,31 +679,34 @@ def verdict(command, cwd=None):
 
     `cwd` is optional; the 'warn-nomatch' arm runs when the harness supplies one.
     """
-    cl = clauses(command)
-    write_at = None
-    for idx, (text, _op) in enumerate(cl):
-        if _WRITE.search(text):
-            write_at = idx
-            break
-    if write_at is None:
-        # No write clause, so nothing later can be skipped. The command in hand can still
-        # be cancelled outright, which is the arm below.
-        hit = multi_glob_delete(command)
-        return ("warn-delete", hit, "") if hit else _glob_only(command, cwd)
-    # write_at == 0 needs no special case: range(0) is empty, so a command whose FIRST
-    # clause is the write can never have a risky clause before it.
+    cl = chained(clauses(command))
+    zsh = tool_shell() == "zsh"
 
+    # Each write is checked against ITS OWN dependency chain: the clauses joined to it
+    # by an unbroken run of `&&`. A `;`, `||` or newline ends that run, because a
+    # failure before it no longer skips the write. A `|` does not end it: a pipeline
+    # is one command in the chain, so `cd x && make | tee log` skips the tee too. Only
+    # the clause right before an `&&` is checked, since an earlier pipeline stage's
+    # failure does not decide the pipeline's status.
     glob_hit = None
-    for idx in range(write_at):
-        text, op = cl[idx]
-        if op != "&&":
+    for write_at, (wtext, _wop) in enumerate(cl):
+        if not writes_file(wtext):
             continue
-        if relative_cd(text):
-            return "block", text.strip(), cl[write_at][0].strip()
-        if glob_hit is None and unquoted_glob(text):
-            glob_hit = text.strip()
+        idx = write_at - 1
+        while idx >= 0 and cl[idx][1] in ("&&", "|"):
+            text, op = cl[idx]
+            idx -= 1
+            if op != "&&":
+                continue
+            if relative_cd(text):
+                return "block", text.strip(), wtext.strip()
+            if zsh and glob_hit is None and unquoted_glob(text):
+                glob_hit = (text.strip(), wtext.strip())
     if glob_hit:
-        return "warn", glob_hit, cl[write_at][0].strip()
+        return "warn", glob_hit[0], glob_hit[1]
+    if not zsh:
+        # The remaining arms describe how zsh expands a word before the command runs.
+        return None
     hit = multi_glob_delete(command)
     return ("warn-delete", hit, "") if hit else _glob_only(command, cwd)
 

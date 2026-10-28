@@ -89,6 +89,26 @@ SLOW_RUNNERS = (
 )
 
 
+def tool_shell(environ=None):
+    """The shell Claude Code's Bash tool runs commands in, "zsh" or "bash".
+
+    Claude Code docs, env-vars page, CLAUDE_CODE_SHELL: "If the value is not a working
+    `bash` or `zsh` path, Claude Code ignores it and falls back to auto-detection.
+    Auto-detection uses your `$SHELL` when it points to `bash` or `zsh`, otherwise it
+    picks the first working `zsh` then `bash` found on your `PATH` and standard
+    install locations." The no-split and colon-modifier checks, and the PIPESTATUS
+    advice, describe zsh, so they apply only when zsh is the shell.
+    """
+    env = os.environ if environ is None else environ
+    forced = env.get("CLAUDE_CODE_SHELL") or ""
+    if os.path.basename(forced) in ("zsh", "bash") and os.access(forced, os.X_OK):
+        return os.path.basename(forced)
+    name = os.path.basename(env.get("SHELL") or "")
+    if name in ("zsh", "bash"):
+        return name
+    return "zsh" if shutil.which("zsh") else "bash"
+
+
 def result_arrives_as_notification(command, background):
     """True when the status you are handed will NOT be the tool result you read.
 
@@ -112,33 +132,22 @@ def command_groups(command):
     from `a; b`. This keeps the pipe boundaries AND the order, which is what a
     question about "what did $? just read" needs.
 
-    Lines are split BEFORE tokenizing, because shlex treats a newline as
-    whitespace and drops it. Without this, `a | tail -3` on one line and
-    `if [ $? ]` on the next collapse into ONE stage, the status read lands
-    inside the pipeline instead of after it, and the check silently misses the
-    commonest multi-line shape.
-
-    A line that will not tokenize on its own (an open quote spanning lines)
-    falls back to tokenizing the whole text, which is the pre-fix behaviour.
+    The whole text is tokenized ONCE. The tokenizer returns a newline as its own
+    operator, so `a | tail -3` on one line and `if [ $? ]` on the next stay two
+    groups, and a pipe that ENDS a line (`a |` then `tail -3`) arrives as one
+    `|` + newline token that still joins the two stages, as the shell does. A
+    backslash-newline is a line continuation and is joined first.
     """
     scannable, _bodies = strip_heredocs(command)
-    try:
-        token_runs = [tokenize(line) for line in scannable.split("\n") if line.strip()]
-    except (UnparseableCommand, ValueError):
-        token_runs = [tokenize(scannable)]
-
-    groups = []
-    for tokens in token_runs:
-        groups.extend(_groups_from_tokens(tokens))
-    return groups
+    return _groups_from_tokens(tokenize(scannable.replace("\\\n", " ")))
 
 
 def _groups_from_tokens(tokens):
     groups, current, stage = [], [], []
     for tok in tokens:
-        is_pipe = tok == "|"
+        is_pipe = bool(tok) and tok.replace("\n", "") == "|"
         is_other_op = (not is_pipe) and (
-            tok in OPERATORS or (tok and all(c in "|&;" for c in tok))
+            tok in OPERATORS or (tok and all(c in "|&;\n" for c in tok))
         )
         if is_pipe:
             if stage:
@@ -553,6 +562,9 @@ def raw_codex_exec(command):
 
 
 # A `while`/`until` loop that waits on `pgrep -f ...` or `ps ... | grep ...`.
+# A quoted string, double or single, whichever opens first. Its CONTENT is data.
+_QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"|\'[^\']*\'')
+
 SELF_WAIT = re.compile(r"\b(?:while|until)\b[^;\n]*?"
                        r"(?:\bpgrep\s+(?:-\w+\s+)*-\w*f|\bps\b[^|\n;]*\|\s*grep\b)"
                        r"[^\n]*?(?:;|\n)\s*do\b")
@@ -564,11 +576,17 @@ def self_matching_wait(command):
 
     The Bash tool runs the command as `zsh -c '<command>'`, so the pattern is in the waiting
     shell's own command line and pgrep/ps always finds it. Quiet when the loop drops its own
-    shell with `$$`, and inside a heredoc, which writes a script that runs in another shell.
+    shell with `$$`. Only the text the shell RUNS is read: heredoc bodies (a script being
+    written, which runs in another shell) and quoted strings (an example being printed)
+    are removed first, so a real loop beside either one still counts.
     """
-    if "$$" in command or "<<" in command:
+    try:
+        text, _bodies = strip_heredocs(command)
+    except Exception:  # noqa: BLE001 - an unreadable heredoc leaves the text as it is
+        text = command
+    if "$$" in text:
         return None
-    m = SELF_WAIT.search(command)
+    m = SELF_WAIT.search(_QUOTED.sub(lambda q: q.group(0)[0] * 2, text))
     return m.group(0) if m else None
 
 
@@ -675,9 +693,10 @@ def zsh_no_split(command):
 
 
 def build_message(command, background=False):
+    zsh = tool_shell() == "zsh"
     pipeline = status_after_pipe(command)
-    colon_mod = zsh_colon_modifier(command)
-    no_split = zsh_no_split(command)
+    colon_mod = zsh_colon_modifier(command) if zsh else None
+    no_split = zsh_no_split(command) if zsh else None
     timeout_seg = missing_timeout(command)
     bg_pipeline = background_pipeline(command, background)
     codex_seg = raw_codex_exec(command)
@@ -701,12 +720,15 @@ def build_message(command, background=False):
             "  still prints 0.\n\n"
             "  Read the real status one of these ways, BEST FIRST:\n"
             "      cmd > out.txt 2>&1; echo $?   # no pipe at all, then read out.txt\n"
-            "      set -o pipefail            # then $? is the first failing stage\n"
-            "  Do NOT reach for ${PIPESTATUS[0]}: that array is bash's, the shell here\n"
-            "  is zsh where it is lowercase AND 1-indexed, so the bash spelling expands\n"
-            "  to an empty string."
+            "      set -o pipefail            # then $? is the first failing stage"
             % pipeline[:160]
         )
+        if zsh:
+            parts.append(
+                "  Do NOT reach for ${PIPESTATUS[0]}: that array is bash's, the shell here\n"
+                "  is zsh where it is lowercase AND 1-indexed, so the bash spelling expands\n"
+                "  to an empty string."
+            )
 
     if writer:
         parts.append(
@@ -823,11 +845,11 @@ def build_message(command, background=False):
             "  `codex exec` READS STDIN when none is given and blocks. The tell is an\n"
             "  output file holding only `Reading additional input from stdin...`, and\n"
             "  the run then dies at the 10-minute Bash ceiling having done nothing.\n\n"
-            "  Use the runner, which also handles the missing `timeout` and the\n"
-            "  writable-sandbox default:\n"
-            "      python3 ~/.claude/skills/_shared/codex_delegate.py ...\n"
-            "  If you really need the raw command, append `< /dev/null` in the same\n"
-            "  breath. See ~/.claude/skills/_shared/codex-delegation.md."
+            "  Close stdin in the same breath: append `< /dev/null` to the command.\n"
+            "  If you installed this pack's skills (README step 2), the runner\n"
+            "  ~/.claude/skills/_shared/codex_delegate.py also handles the missing\n"
+            "  `timeout` and the writable-sandbox default; its guide is\n"
+            "  ~/.claude/skills/_shared/codex-delegation.md."
             % codex_seg[:160]
         )
 

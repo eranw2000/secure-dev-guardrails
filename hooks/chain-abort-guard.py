@@ -137,15 +137,25 @@ def _strip_heredocs(command):
         return command
 
 
+# The `&` inside a redirect (`2>&1`, `>&2`, `<&3`, `&>`, `&>>`) is part of that
+# redirect, not a background operator, so it is hidden from the split and put back.
+_REDIRECT_AMP = re.compile(r"(?<=[<>])&|&(?=>)")
+_AMP_MASK = "\x01"
+
+
 def clauses(command):
-    """[(clause_text, operator_joining_it_to_the_next)]; the last operator is None."""
-    parts = _SPLIT.split(_strip_heredocs(command))
+    """[(clause_text, operator_joining_it_to_the_next)]; the last operator is None.
+
+    A backslash-newline is a line continuation, so it is joined before the split.
+    """
+    text = _strip_heredocs(command).replace("\\\n", " ")
+    parts = _SPLIT.split(_REDIRECT_AMP.sub(_AMP_MASK, text))
     out = []
     i = 0
     while i < len(parts):
-        text = parts[i]
+        part = parts[i].replace(_AMP_MASK, "&")
         op = parts[i + 1] if i + 1 < len(parts) else None
-        out.append((text, op))
+        out.append((part, op))
         i += 2
     return out
 

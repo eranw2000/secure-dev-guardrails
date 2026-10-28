@@ -187,6 +187,12 @@ def chain_abort_cases(cwd: str) -> None:
          "echo ready > first.txt; cd build && echo done > second.txt", BLOCK, cwd)
     case("a ; between the cd and the write ends the chain", h,
          "cd build && true; echo done > status.txt", QUIET, cwd)
+    case("2>&1 | tee after a relative cd still blocks", h,
+         "cd build && make 2>&1 | tee build.log", BLOCK, cwd)
+    case("&> after a relative cd still blocks", h,
+         "cd build && make &> log.txt", BLOCK, cwd)
+    case("a backslash continuation after && still blocks", h,
+         "cd build && \\\n python3 gen.py > out.txt", BLOCK, cwd)
     case("a pipeline stays in the chain: cd && make | tee log blocks", h,
          "cd build && make | tee build.log", BLOCK, cwd)
     case("under bash an unquoted --include=*.py is quiet (a zsh-only abort)", h,
@@ -367,7 +373,7 @@ def main() -> int:
             bad += 1
             print("        " + detail.strip().replace("\n", "\n        ")[:600])
     print(f"--- shell-safety hooks: {len(results) - bad}/{len(results)} ---")
-    if len(results) < 90:
+    if len(results) < 93:
         print("FAIL: fewer cases ran than are written here; the runner is broken")
         return 1
     return 1 if bad else 0

@@ -42,6 +42,16 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    # The shared quote-aware parser. Without it the words below are split on
+    # whitespace, which reads a quoted value with a space as two words.
+    from _bash_command_parse import cd_target as _parse_cd_target
+    from _bash_command_parse import strip_prefixes as _parse_strip_prefixes
+    from _bash_command_parse import tokenize as _parse_tokenize
+except Exception:  # noqa: BLE001 - the helper ships beside this file
+    _parse_tokenize = None
+
 HOME = os.path.expanduser("~")
 
 # Repositories where a history or tree rewrite needs an explicit decision,
@@ -164,11 +174,26 @@ def strip_prefixes(segment):
         if m and m.end() > 0:
             s = s[m.end():]
             continue
-        m = re.match(r"^\w+=[^\s]*\s+", s)
+        # A value may be quoted and hold spaces: `FOO="a b" rm -rf x` is still rm.
+        m = re.match(r"^\w+=(?:\"[^\"]*\"|'[^']*'|[^\s\"'])*\s+", s)
         if m:
             s = s[m.end():]
             continue
         return s
+
+
+def words_of(segment):
+    """The segment's words after wrappers and assignments, read quote-aware.
+
+    Falls back to a whitespace split when the parser is missing or the text has an
+    unbalanced quote.
+    """
+    if _parse_tokenize is not None:
+        try:
+            return _parse_strip_prefixes(_parse_tokenize(segment))
+        except Exception:  # noqa: BLE001 - fall back to the split below
+            pass
+    return [t.strip("'\"") for t in strip_prefixes(segment).split()]
 
 
 def head_token(segment):
@@ -301,9 +326,19 @@ def resolve_cwd(segments, index, default_cwd):
     """Best-effort cwd for a segment, honoring earlier `cd` in the same command."""
     cwd = default_cwd
     for seg in segments[:index]:
-        m = re.match(r"^[{(\s]*cd\s+(?:-[-\w]+\s+)*([^\s;&|]+)", seg.strip())
-        if m:
-            target = m.group(1).strip("'\"")
+        target = None
+        if _parse_tokenize is not None:
+            try:
+                tokens = _parse_tokenize(seg.strip().lstrip("{( "))
+                target = _parse_cd_target(tokens)
+                if target and target.startswith("-") and len(tokens) > 2:
+                    target = tokens[-1]
+            except Exception:  # noqa: BLE001 - use the regex below
+                target = None
+        if target is None:
+            m = re.match(r"^[{(\s]*cd\s+(?:-[-\w]+\s+)*([^\s;&|]+)", seg.strip())
+            target = m.group(1).strip("'\"") if m else None
+        if target:
             target, _ok = expand_vars(target, collect_vars(segments, index))
             target = os.path.expanduser(target)
             cwd = target if os.path.isabs(target) else os.path.normpath(
@@ -323,31 +358,46 @@ def git_target_dir(segment, seg_cwd, segments, index):
     Only a `-C` that appears BEFORE the subcommand counts. `git commit -C HEAD`
     reuses a commit message and names no directory at all.
     """
-    tokens = strip_prefixes(segment).split()
-    if not tokens or os.path.basename(tokens[0].strip("'\"")) != "git":
+    tokens = words_of(segment)
+    while tokens and tokens[0] in ("(", "{"):
+        tokens = tokens[1:]
+    if not tokens or os.path.basename(tokens[0]) != "git":
         return None
+    seg_vars = collect_vars(segments, index)
+
+    def absolute(path, base):
+        path, _ok = expand_vars(path, seg_vars)
+        path = os.path.expanduser(path)
+        return path if os.path.isabs(path) else os.path.normpath(os.path.join(base, path))
+
+    # git applies each -C to the one before it: `git -C a -C b` runs in a/b.
     target = None
+    work_tree = None
     i = 1
     while i < len(tokens):
         tok = tokens[i]
         if tok == "-C" and i + 1 < len(tokens):
-            target = tokens[i + 1]
+            target = absolute(tokens[i + 1], target or seg_cwd)
             i += 2
             continue
-        if tok in ("--git-dir", "--work-tree", "-c"):
+        if tok == "--work-tree" and i + 1 < len(tokens):
+            work_tree = tokens[i + 1]
+            i += 2
+            continue
+        if tok.startswith("--work-tree="):
+            work_tree = tok[len("--work-tree="):]
+            i += 1
+            continue
+        if tok in GIT_GLOBAL_VALUE_OPTS:
             i += 2
             continue
         if tok.startswith("-"):
             i += 1
             continue
         break                      # the subcommand; any later -C is not a directory
-    if target is None:
-        return None
-    target = target.strip("'\"")
-    target, _ok = expand_vars(target, collect_vars(segments, index))
-    target = os.path.expanduser(target)
-    if not os.path.isabs(target):
-        target = os.path.normpath(os.path.join(seg_cwd, target))
+    if work_tree:
+        # The tree a discard rewrites is the work tree, wherever -C points.
+        return absolute(work_tree, target or seg_cwd)
     return target
 
 
@@ -366,10 +416,10 @@ def git_words(segment):
     start of the segment and the subcommand. Every git rule below reads THIS form,
     so none of them can be stepped round by a prefix.
     """
-    tokens = strip_prefixes(segment).split()
+    tokens = words_of(segment)
     while tokens and tokens[0] in ("(", "{"):
-        tokens.pop(0)
-    if not tokens or os.path.basename(tokens[0].strip("'\"")) != "git":
+        tokens = tokens[1:]
+    if not tokens or os.path.basename(tokens[0]) != "git":
         return None
     i = 1
     while i < len(tokens):
@@ -397,20 +447,38 @@ def restore_keeps_worktree(words):
     by default the working tree is restored. Specifying --staged will only restore
     the index. Specifying both restores both." So the SAFE side is exactly: the
     index is named and the working tree is not. Short flags cluster (`-SW`), so a
-    cluster is read letter by letter.
+    cluster is read letter by letter, up to `s`, whose value is the rest of the
+    word (`-sSTABLE` names a source, not the index). `--no-staged` and
+    `--no-worktree` undo the flag before them.
     """
     staged = worktree = False
-    for tok in words[2:]:
+    args = words[2:]
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        i += 1
         if tok == "--":
             break
-        if tok == "--staged":
+        if tok in ("--source", "--pathspec-from-file", "--conflict"):
+            i += 1                 # the next word is this option's value
+        elif tok == "--staged":
             staged = True
+        elif tok == "--no-staged":
+            staged = False
         elif tok == "--worktree":
             worktree = True
+        elif tok == "--no-worktree":
+            worktree = False
         elif tok.startswith("-") and not tok.startswith("--"):
-            letters = tok[1:]
-            staged = staged or "S" in letters
-            worktree = worktree or "W" in letters
+            for pos, ch in enumerate(tok[1:]):
+                if ch == "s":
+                    if pos == len(tok) - 2:
+                        i += 1     # `-s` alone: the value is the next word
+                    break
+                if ch == "S":
+                    staged = True
+                elif ch == "W":
+                    worktree = True
     return staged and not worktree
 
 
@@ -505,8 +573,8 @@ TREE_DISCARD = [
      "git clean -f deletes untracked files outright; they are in no index"),
 ]
 
-# `git restore` is destructive ONLY without --staged. With --staged it unstages
-# and leaves the working tree untouched, which is the opposite of destructive.
+# `git restore` is destructive unless it names only the index (--staged without
+# --worktree); `restore_keeps_worktree` decides.
 RESTORE_RE = re.compile(r"^git\s+(?:-C\s+\S+\s+)?restore\b")
 
 WARN_RULES = [
@@ -578,6 +646,11 @@ def check_segment(seg, cwd, all_segs, idx, piped_to_interpreter=False):
             discard_reason = "git restore <path> overwrites that path from the index, with no undo"
     if discard_reason:
         dirty = dirty_files(seg_cwd)
+        if dirty is None and "$" not in seg_cwd and not os.path.exists(seg_cwd):
+            # The folder does not exist yet (an earlier clause clones or creates
+            # it), so it cannot hold uncommitted work.
+            return "warn", (discard_reason + ", in " + seg_cwd + ", which does not "
+                            "exist yet, so it holds no uncommitted work")
         if dirty is None:
             # An unknown status is not a clean tree. `git status` failed or timed
             # out, so there may be uncommitted work this command would destroy.
@@ -609,16 +682,18 @@ def check_segment(seg, cwd, all_segs, idx, piped_to_interpreter=False):
             raw = t.strip("'\"")
             resolved, fully = expand_vars(raw, seg_vars)
             expanded = os.path.expanduser(resolved)
-            # `..` is folded before any decision, so `/tmp/..` is the root and
-            # `node_modules/../src` is `src`.
-            if expanded:
-                expanded = os.path.normpath(expanded)
+            # `norm` folds `..` only to NAME the root or home (`/tmp/..` is the root).
+            # Every allowance below reads the path the system will really walk, so
+            # a symlink before a `..` is followed before the `..` is applied.
+            norm = os.path.normpath(expanded) if expanded else expanded
+            real = os.path.realpath(expanded) if os.path.isabs(expanded) else None
 
             # ORDER IS LOAD-BEARING. The unresolvable and catastrophic cases are
             # decided BEFORE any allowlist, so a path the guard could not resolve is
             # never treated as safe just because the cwd sits under a safe root.
             if raw in ("/", "/*", "~", "~/", "$HOME", "${HOME}", "$HOME/", "~/*") \
-                    or expanded.rstrip("/") in ("", HOME) or expanded == "/":
+                    or expanded.rstrip("/") in ("", HOME) or expanded == "/" \
+                    or norm in ("/", HOME) or real in ("/", os.path.realpath(HOME)):
                 return "block", ("rm -rf against " + raw
                                  + " would delete your home directory or the filesystem root")
             bare_var = re.match(r"^\$\{?\w+\}?/?\*?$", raw)
@@ -630,7 +705,7 @@ def check_segment(seg, cwd, all_segs, idx, piped_to_interpreter=False):
                     "guard it with ${VAR:?} so the shell refuses when it is unset.")
 
             base = os.path.basename(expanded.rstrip("/"))
-            if base in SAFE_BASENAMES:
+            if base in SAFE_BASENAMES and ".." not in expanded.split("/"):
                 continue
             if under_safe_root(expanded if os.path.isabs(expanded)
                                else os.path.join(seg_cwd, expanded)):

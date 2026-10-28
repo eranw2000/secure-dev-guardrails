@@ -587,7 +587,20 @@ def self_matching_wait(command):
     if "$$" in text:
         return None
     m = SELF_WAIT.search(_QUOTED.sub(lambda q: q.group(0)[0] * 2, text))
-    return m.group(0) if m else None
+    if m:
+        return m.group(0)
+    # A quoted program handed to `bash -c` / `zsh -c` is RUN, not data: read it too.
+    try:
+        from _bash_command_parse import command_segments, nested_shell_command
+        for seg in command_segments(text):
+            payload = nested_shell_command(seg)
+            if payload:
+                hit = self_matching_wait(payload)
+                if hit:
+                    return hit
+    except Exception:  # noqa: BLE001 - an unparseable command keeps the result above
+        pass
+    return None
 
 
 # zsh reads `$NAME:<letter>` as NAME with a HISTORY MODIFIER (`:a` absolute path, `:h` head,

@@ -35,7 +35,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from _bash_command_parse import git_call, split_segments, strip_prefixes, tokenize
+    from _bash_command_parse import (git_call, nested_shell_command, split_segments,
+                                     strip_prefixes, tokenize)
 except Exception:  # noqa: BLE001 - without the helper the text fallback below runs
     tokenize = None
 
@@ -187,7 +188,11 @@ def reaches_out(segment, tokens=None):
     if head == "gh" and len(words) > 1 and words[1] in _GH_WRITES:
         return True
     call = git_call(words)
-    return bool(call) and call["subcommand"] in _GIT_MOVES
+    if call and call["subcommand"] in _GIT_MOVES:
+        return True
+    # A quoted program handed to `bash -c` is RUN, so its clauses count too.
+    payload = nested_shell_command(words)
+    return bool(payload) and any(reaches_out(t, k) for t, k in segments(payload))
 
 
 # ---------------------------------------------------------------------------

@@ -150,6 +150,8 @@ def write_then_remote_cases(cwd: str) -> None:
          "echo hi > output.txt && git -C /opt/project push origin main", BLOCK, cwd)
     case("git -c k=v commit after a write blocks", h,
          "echo hi > o.txt && git -c core.quotePath=false commit -m x", BLOCK, cwd)
+    case("a remote call inside bash -c after a write blocks", h,
+         "echo x > f.txt && bash -c 'curl https://example.com/a'", BLOCK, cwd)
     case("a quoted example of the shape is data and is quiet", h,
          'echo "example > output.txt; git push origin main"', QUIET, cwd)
     case("a real push after a quoted > still blocks", h,
@@ -234,6 +236,8 @@ def shell_status_cases(cwd: str) -> None:
     case("the bypass marker lets a blocked call through", h,
          "while pgrep -f \"run_tests.py\" > /dev/null; do sleep 5; done #allow-shell-status",
          QUIET, cwd)
+    case("a wait loop handed to bash -c is executed and blocks", h,
+         "bash -c 'while pgrep -f myjob; do sleep 5; done'", BLOCK, cwd, "matches ITSELF")
     case("a quoted example of a wait loop is data and is quiet", h,
          'echo "while pgrep -f run_tests.py; do sleep 5; done"', QUIET, cwd)
     case("a real wait loop after a heredoc still blocks", h,
@@ -308,6 +312,15 @@ def destructive_cases(cwd: str, dirty: str, clean: str) -> None:
          "rm -rf /tmp/build/../cache", QUIET, cwd)
     case("git reset --hard where git status cannot be read blocks", h,
          "git reset --hard", BLOCK, NOT_A_REPO, "could not read")
+    case("git restore -s<source> restores the tree and blocks", h,
+         "git restore -sSTABLE tracked.py", BLOCK, dirty)
+    case("a quoted -c value before reset --hard blocks", h,
+         'git -c "core.sshCommand=ssh -i key" reset --hard', BLOCK, dirty)
+    case("a quoted assignment before rm -rf blocks", h,
+         'FOO="a b" rm -rf /opt/project/src', BLOCK, cwd)
+    case("a discard in a folder that does not exist yet only warns", h,
+         "git clone https://example.com/x.git newdir && cd newdir && git reset --hard abc",
+         WARN, NOT_A_REPO, "does not exist yet")
     case("git branch -D warns", h, "git branch -D feature/x", WARN, clean, "reflog")
     case("git stash warns", h, "git stash", WARN, clean, "stash")
     case("git stash list is quiet", h, "git stash list", QUIET, clean)
@@ -373,7 +386,7 @@ def main() -> int:
             bad += 1
             print("        " + detail.strip().replace("\n", "\n        ")[:600])
     print(f"--- shell-safety hooks: {len(results) - bad}/{len(results)} ---")
-    if len(results) < 93:
+    if len(results) < 99:
         print("FAIL: fewer cases ran than are written here; the runner is broken")
         return 1
     return 1 if bad else 0

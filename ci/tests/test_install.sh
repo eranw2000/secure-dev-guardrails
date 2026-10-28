@@ -49,6 +49,10 @@ check "all present: the installer succeeds" "$rc" 0
 check "all present: managed settings written" "$([ -f "$TMP/managed2/managed-settings.json" ] && echo yes || echo no)" yes
 check "all present: the secret-scan hook installed" "$([ -x "$TMP/home2/hooks/secret-scan.sh" ] && echo yes || echo no)" yes
 check "all present: the parser helper installed" "$([ -f "$TMP/home2/hooks/_bash_command_parse.py" ] && echo yes || echo no)" yes
+for h in destructive-command-guard.py write-then-remote-guard.py chain-abort-guard.py shell-status-guard.py; do
+  check "all present: $h installed" "$([ -f "$TMP/home2/hooks/$h" ] && echo yes || echo no)" yes
+  check "all present: managed settings run $h on Bash" "$(jq -r --arg h "$h" '[.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command | select(endswith("/hooks/" + $h))] | length' "$TMP/managed2/managed-settings.json")" 1
+done
 
 echo
 echo "selftest: $PASS passed, $FAIL failed"

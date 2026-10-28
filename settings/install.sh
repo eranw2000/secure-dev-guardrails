@@ -57,6 +57,9 @@ verify() {
   for h in secret-scan.sh pii-in-logs.sh sensitive-file-context.sh dangerous-pattern-warn.sh; do
     if [ -x "$GUARDRAILS_HOME/hooks/$h" ]; then echo "  ok   hook $h"; else echo "  MISS hook $h"; ok=1; fi
   done
+  for h in destructive-command-guard.py write-then-remote-guard.py chain-abort-guard.py shell-status-guard.py; do
+    if [ -f "$GUARDRAILS_HOME/hooks/$h" ]; then echo "  ok   hook $h"; else echo "  MISS hook $h"; ok=1; fi
+  done
   for h in secret-scan-git.py _bash_command_parse.py _bash_write_targets.py _pii_bash_lines.py _shell_secret_argv.py; do
     if [ -f "$GUARDRAILS_HOME/hooks/$h" ]; then echo "  ok   helper $h"; else echo "  MISS helper $h"; ok=1; fi
   done
@@ -92,8 +95,9 @@ preflight
 # Install hooks + standards (standards are read by the hooks' sibling skills and CI).
 mkdir -p "$GUARDRAILS_HOME/hooks" "$GUARDRAILS_HOME/standards"
 install -m 0755 "$REPO_DIR/hooks/"*.sh "$GUARDRAILS_HOME/hooks/"
-# The Python helpers the shell hooks call. Without secret-scan-git.py every commit and
-# push is blocked, because a scan that did not run must never read as a clean one.
+# The Python hooks (the four shell-safety guards) and the Python helpers the shell hooks
+# call. Without secret-scan-git.py every commit and push is blocked, because a scan that
+# did not run must never read as a clean one.
 install -m 0644 "$REPO_DIR/hooks/"*.py "$GUARDRAILS_HOME/hooks/"
 install -m 0644 "$REPO_DIR/standards/"* "$GUARDRAILS_HOME/standards/"
 

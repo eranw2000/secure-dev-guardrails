@@ -410,7 +410,6 @@ robot_view() {
 # A Render service's SSH address, `srv-<id> at ssh.<region>.render.com`, names a machine: no
 # mailbox can sit behind it. Removed before the VALUE test only, and only in exactly that shape.
 # Both edges are an allow list, so a person glued to either side of it still blocks.
-# Measured 2026-11-01: listing a service's logins over SSH was refused as email-in-log.
 machine_view() {
   printf '%s' "$1" | sed -E "s/(^|[[:space:]\"])srv-[a-z0-9]+@ssh\.[a-z0-9-]+\.render\.com([[:space:]\"':]|\$)/\1 \2/g"
 }

@@ -13,6 +13,15 @@
 # All patterns use POSIX ERE only: [[:space:]] not \s, and (^|[^...]) boundaries not \b, so they
 # behave the same under BSD (macOS) and GNU grep. A \s / \b here silently matches nothing on BSD.
 
+# The first interpreter that really runs: a Windows PATH can hold a python3 that only
+# offers to install Python.
+pick_python() {
+  local c
+  for c in python3 python "py -3"; do
+    if $c -c '' >/dev/null 2>&1; then echo "$c"; return; fi
+  done
+}
+
 set -u
 
 INPUT=$(cat)
@@ -239,7 +248,9 @@ case "$FILE_PATH" in
     # both reviewers caught it, this hook ran on every edit and was silent because it skipped
     # .sh files outright.
     # Line-based and deliberately narrow; what it treats as SAFE is the list in the code.
-    SHELL_HITS=$( { python3 "$(dirname "$0")/_shell_secret_argv.py" "$FILE_PATH" || python "$(dirname "$0")/_shell_secret_argv.py" "$FILE_PATH"; } 2>/dev/null)
+    PYCMD=$(pick_python)
+    SHELL_HITS=""
+    [ -n "$PYCMD" ] && SHELL_HITS=$($PYCMD "$(dirname "$0")/_shell_secret_argv.py" "$FILE_PATH" 2>/dev/null)
     [ -n "$SHELL_HITS" ] && add "SEC-SECRET-03" "a credential-named variable passed as a command argument (line ${SHELL_HITS}); argv is readable by ps, so pipe it on stdin (printf is a builtin) or write it to a mode-600 file"
     ;;
 esac

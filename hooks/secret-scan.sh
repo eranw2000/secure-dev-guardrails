@@ -31,7 +31,7 @@ INPUT=$(cat)
 # Without jq, or with input jq cannot read, the tool name would come back empty and
 # every call would fall through to "allow". That is a scan that never ran, so block.
 if ! command -v jq >/dev/null 2>&1; then
-  printf '%s\n' "scanner error: jq is not installed, so this secret scan could not read the tool call. This is not a clean result. Install jq (a command you run yourself with \`! brew install jq\`, or your package manager, runs outside this hook) and re-run." >&2
+  printf '%s\n' "scanner error: jq is not installed, so this secret scan could not read the tool call. This is not a clean result. Install jq (a command you run yourself with \`! brew install jq\` on macOS, \`! winget install jqlang.jq\` on Windows, or your package manager, runs outside this hook) and re-run." >&2
   exit 2
 fi
 if ! TOOL=$(printf '%s' "$INPUT" | jq -er '.tool_name // ""' 2>/dev/null); then
@@ -163,8 +163,8 @@ case "$TOOL" in
     #     a push's secret can be in a committed-but-unpushed commit while the index is
     #     empty, which the old single `--staged` scan reported as clean.
     #
-    # The interpreter: SECRET_SCAN_PYTHON when set, else the python3 on PATH, else
-    # /usr/bin/python3. PATH comes first so a working Homebrew or venv python wins
+    # The interpreter: SECRET_SCAN_PYTHON when set, else the first that runs of python3,
+    # python and /usr/bin/python3, else py -3. PATH comes first so a working Homebrew or venv python wins
     # over a system stub that only asks to install developer tools. The Python hook is run, not exec'd, so its status can be read:
     # 0 allows, 2 blocks, and ANYTHING else (a crash, a missing or stub interpreter)
     # blocks too, because it means no verdict. The here-string avoids a pipe, whose
@@ -182,13 +182,17 @@ case "$TOOL" in
             break
           fi
         done
+        if [ -z "$PY" ] && command -v py >/dev/null 2>&1 && py -3 -c '' >/dev/null 2>&1; then
+          PY=$(command -v py)
+          PY_FLAG=-3
+        fi
       fi
       if [ -z "$PY" ]; then
         deny \
           "scanner error: no working Python found, so the git commit / push secret scan did NOT run. This is not a clean result." \
           "Install Python 3, or set SECRET_SCAN_PYTHON to its path, and re-run."
       fi
-      "$PY" "$PY_HOOK" <<< "$INPUT"
+      "$PY" ${PY_FLAG:-} "$PY_HOOK" <<< "$INPUT"
       STATUS=$?
       case "$STATUS" in
         0|2) exit "$STATUS" ;;

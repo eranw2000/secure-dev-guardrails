@@ -23,13 +23,22 @@
 # and an entry naming only a `fingerprint` waives nothing anywhere. This hook used to point a
 # reader at both. Rewrite the line, or narrow the pattern below and say why in the commit.
 
+# The first interpreter that really runs: a Windows PATH can hold a python3 that only
+# offers to install Python.
+pick_python() {
+  local c
+  for c in python3 python "py -3"; do
+    if $c -c '' >/dev/null 2>&1; then echo "$c"; return; fi
+  done
+}
+
 set -u
 
 INPUT=$(cat)
 # Without jq, or with input jq cannot read, the tool name would come back empty and
 # every call would be allowed unchecked. That is a check that never ran, so block.
 if ! command -v jq >/dev/null 2>&1; then
-  printf '%s\n' "privacy check error: jq is not installed, so this check could not read the tool call. This is not a clean result. Install jq (a command you run yourself with \`! brew install jq\`, or your package manager, runs outside this hook) and re-run." >&2
+  printf '%s\n' "privacy check error: jq is not installed, so this check could not read the tool call. This is not a clean result. Install jq (a command you run yourself with \`! brew install jq\` on macOS, \`! winget install jqlang.jq\` on Windows, or your package manager, runs outside this hook) and re-run." >&2
   exit 2
 fi
 if ! TOOL=$(printf '%s' "$INPUT" | jq -er '.tool_name // ""' 2>/dev/null); then
@@ -433,7 +442,10 @@ path_view() {
 # scanned as before: a failure can only make this stricter.
 SCAN="$CONTENT"
 if [ "$TOOL" = "Bash" ]; then
-  SPLIT=$( { printf '%s' "$CONTENT" | python3 "$(dirname "$0")/_pii_bash_lines.py" || printf '%s' "$CONTENT" | python "$(dirname "$0")/_pii_bash_lines.py"; } 2>/dev/null) && [ -n "$SPLIT" ] && SCAN="$SPLIT"
+  PYCMD=$(pick_python)
+  if [ -n "$PYCMD" ]; then
+    SPLIT=$(printf '%s' "$CONTENT" | $PYCMD "$(dirname "$0")/_pii_bash_lines.py" 2>/dev/null) && [ -n "$SPLIT" ] && SCAN="$SPLIT"
+  fi
 fi
 
 # Real newlines, printed with %s. A flagged line is source text, so a backslash in it is text:

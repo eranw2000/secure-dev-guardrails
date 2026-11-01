@@ -119,9 +119,10 @@ here; another plan item owns it.
 import fnmatch
 import sys
 # Read and write UTF-8 on every OS: the Windows default code page misreads it.
-for _stream in (sys.stdin, sys.stdout, sys.stderr):
-    if hasattr(_stream, "reconfigure"):
-        _stream.reconfigure(encoding="utf-8", errors="replace")
+if __name__ == "__main__":
+    for _stream in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
 import importlib.util
 import json
 import os
@@ -368,7 +369,8 @@ def _unplaced_git_op(tokens, wanted):
     if not tokens or os.path.basename(tokens[0]) in _NON_RUNNING_WORDS:
         return None
     for i, tok in enumerate(tokens):
-        if os.path.basename(tok) != "git":
+        name = os.path.basename(tok.replace("\\", "/"))
+        if (name[:-4].lower() if name.lower().endswith(".exe") else name) != "git":
             continue
         for later in tokens[i + 1:]:
             if later in wanted:
@@ -844,7 +846,8 @@ def _run_gitleaks(repo, mode_args, label):
             "gitleaks is not installed, so %s was not scanned. Nothing else "
             "checks it: the write branch of this hook sees the content of an Edit "
             "or a Write, never what is already staged or committed. Install it "
-            "with: brew install gitleaks" % label
+            "with: brew install gitleaks on macOS, or a binary from "
+            "https://github.com/gitleaks/gitleaks/releases" % label
         )
 
     workdir = tempfile.mkdtemp(prefix="gitleaks-hook-")

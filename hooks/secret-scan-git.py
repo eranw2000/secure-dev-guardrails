@@ -117,6 +117,12 @@ the repo's directory name), not inline. Reading that register is NOT implemented
 here; another plan item owns it.
 """
 import fnmatch
+import sys
+# Read and write UTF-8 on every OS: the Windows default code page misreads it.
+if __name__ == "__main__":
+    for _stream in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
 import importlib.util
 import json
 import os
@@ -241,7 +247,7 @@ def _sh_pattern_texts(path):
     `grep -Eq` over the lowercased remainder (the assignment shape).
     """
     try:
-        with open(path, "r") as fh:
+        with open(path, "r", encoding="utf-8") as fh:
             src = fh.read()
     except Exception:
         return None
@@ -363,7 +369,8 @@ def _unplaced_git_op(tokens, wanted):
     if not tokens or os.path.basename(tokens[0]) in _NON_RUNNING_WORDS:
         return None
     for i, tok in enumerate(tokens):
-        if os.path.basename(tok) != "git":
+        name = os.path.basename(tok.replace("\\", "/"))
+        if (name[:-4].lower() if name.lower().endswith(".exe") else name) != "git":
             continue
         for later in tokens[i + 1:]:
             if later in wanted:
@@ -549,7 +556,7 @@ def _git(repo, *args):
     try:
         done = subprocess.run(
             ["git", "-C", repo, *args],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True, text=True, timeout=20, encoding="utf-8", errors="replace",
         )
     except Exception:
         return 1, ""
@@ -839,7 +846,8 @@ def _run_gitleaks(repo, mode_args, label):
             "gitleaks is not installed, so %s was not scanned. Nothing else "
             "checks it: the write branch of this hook sees the content of an Edit "
             "or a Write, never what is already staged or committed. Install it "
-            "with: brew install gitleaks" % label
+            "with: brew install gitleaks on macOS, or a binary from "
+            "https://github.com/gitleaks/gitleaks/releases" % label
         )
 
     workdir = tempfile.mkdtemp(prefix="gitleaks-hook-")
@@ -859,7 +867,7 @@ def _run_gitleaks(repo, mode_args, label):
         ] + list(mode_args) + [repo]
         try:
             done = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=SCAN_TIMEOUT, cwd=repo,
+                cmd, capture_output=True, text=True, timeout=SCAN_TIMEOUT, cwd=repo, encoding="utf-8", errors="replace",
             )
         except subprocess.TimeoutExpired:
             raise ScannerError(
@@ -897,7 +905,7 @@ def _run_gitleaks(repo, mode_args, label):
         except OSError:
             pass
         try:
-            with open(report, "r") as fh:
+            with open(report, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
         except Exception:
             raise ScannerError(

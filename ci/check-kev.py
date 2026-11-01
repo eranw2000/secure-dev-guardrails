@@ -32,6 +32,12 @@ a judgement call for the dependency-review skill, and SEC-DEP-04 says what to do
 from __future__ import annotations
 
 import argparse
+import sys
+# Read and write UTF-8 on every OS: the Windows default code page misreads it.
+if __name__ == "__main__":
+    for _stream in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
 import json
 import re
 import sys
@@ -70,7 +76,7 @@ def index(cat: dict) -> dict[str, dict]:
 def ids_from_args(args: argparse.Namespace) -> list[str]:
     raw: list[str] = list(args.cve)
     if args.pip_audit:
-        text = sys.stdin.read() if args.pip_audit == "-" else open(args.pip_audit).read()
+        text = sys.stdin.read() if args.pip_audit == "-" else open(args.pip_audit, encoding="utf-8").read()
         try:
             doc = json.loads(text)
         except ValueError:

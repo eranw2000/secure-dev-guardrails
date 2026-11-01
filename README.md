@@ -43,6 +43,8 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
 
 ## Install (per machine / fleet)
 
+**On Windows:** install [Git for Windows](https://git-scm.com/downloads/win), so Claude Code runs these scripts in Git Bash, and jq (`winget install jqlang.jq`). The security hooks need jq. Where a command here says `python3` and your PC has only `python`, use `python`. In WSL, follow the Linux steps.
+
 1. **Hooks + managed settings:** `sudo settings/install.sh` (or push via MDM). It first checks
    for `jq`, `gitleaks` and a working `python3` and installs nothing if one is missing. Then it
    installs hooks to `/usr/local/share/secure-dev-guardrails/` and, last, the managed-settings

@@ -125,7 +125,7 @@ def run_semgrep() -> None:
     proc = subprocess.run(
         ["semgrep", "--config", str(RULES), "--no-git-ignore", "--json", "--quiet", "--metrics=off", *targets],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
     )
     try:
         data = json.loads(proc.stdout)
@@ -150,7 +150,7 @@ def run_semgrep() -> None:
     want_lines: dict[str, set[int]] = {}
     for name in SEMGREP_FILES:
         want_lines[name] = {
-            i for i, line in enumerate((FIX / name).read_text().splitlines(), start=1)
+            i for i, line in enumerate((FIX / name).read_text(encoding="utf-8").splitlines(), start=1)
             if MARKER in line
         }
     for name in SEMGREP_FILES:
@@ -172,7 +172,7 @@ def run_semgrep() -> None:
 def hook_findings(path: Path) -> set[str]:
     """The rule ids the hook reported, read from its bracketed finding lines only."""
     payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(path)}})
-    proc = subprocess.run(["bash", str(HOOK)], input=payload, capture_output=True, text=True)
+    proc = subprocess.run(["bash", str(HOOK)], input=payload, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if not proc.stdout.strip():
         return set()
     try:

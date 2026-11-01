@@ -38,7 +38,7 @@ results: list[tuple[str, bool, str]] = []
 def run(*args: str) -> tuple[int, str]:
     proc = subprocess.run(
         [sys.executable, str(SCRIPT), "--offline", str(REGISTRY), *args],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     return proc.returncode, proc.stdout + proc.stderr
 
@@ -53,7 +53,7 @@ def case(name: str, args: list[str], code: int, must_say: list[str] = (),
 
 def write(tmp: Path, name: str, text: str) -> str:
     p = tmp / name
-    p.write_text(text, encoding="utf-8")
+    p.write_bytes((text).encode("utf-8"))
     return str(p)
 
 
@@ -147,7 +147,7 @@ def main() -> int:
     assert text.count("__FIVE_DAYS_AGO__") == 2, "fixture lost a relative date"
     work = Path(tempfile.mkdtemp())
     REGISTRY = work / "registry.json"
-    REGISTRY.write_text(text.replace("__FIVE_DAYS_AGO__", five_days_ago), encoding="utf-8")
+    REGISTRY.write_bytes((text.replace("__FIVE_DAYS_AGO__", five_days_ago)).encode("utf-8"))
 
     # --- names on the command line, both directions -------------------------------------
     case("an established PyPI package passes", ["pypi:requests"], 0,
@@ -201,7 +201,7 @@ def main() -> int:
          ["1 established"], ["Traceback"])
     got, out = subprocess.run(
         [sys.executable, str(SCRIPT), "--offline", "/nonexistent/registry.json", "pypi:x"],
-        capture_output=True, text=True).returncode, ""
+        capture_output=True, text=True, encoding="utf-8", errors="replace").returncode, ""
     results.append(("an unreadable offline file exits 2", got == 2, f"exit {got}"))
 
     # --- names that must never reach a URL -----------------------------------------------

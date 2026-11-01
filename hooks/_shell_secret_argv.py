@@ -24,6 +24,11 @@ clean while the original is not:
 
 import re
 import sys
+# Read and write UTF-8 on every OS: the Windows default code page misreads it.
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+import sys
 
 CRED_PARTS = {"KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "PAT",
               "CREDENTIAL", "CREDENTIALS", "APIKEY"}
@@ -115,7 +120,7 @@ def scan(text):
 
 def main():
     try:
-        with open(sys.argv[1], errors="replace") as f:
+        with open(sys.argv[1], errors="replace", encoding="utf-8") as f:
             hits = scan(f.read())
     except Exception:
         return 0

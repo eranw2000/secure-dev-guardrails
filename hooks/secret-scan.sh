@@ -56,9 +56,17 @@ scan_text_for_secrets() {
   # Config and shell files are NOT code here: YAML, .env, compose and export lines
   # carry real secrets without quotes.
   local name_sed='s/^//'
+  # Also in a CODE file, prose in a comment: after `#` or `//`, a colon or = followed by words
+  # joined by a slash and then MORE words (keyword, colon, `before/after are shown`) is a
+  # sentence, not a value. A comment value with digits, or with no words after it, still matches.
+  local prose_sed='s/^//'
   case "$(printf '%s' "${path##*/}" | tr 'A-Z' 'a-z')" in
     *.py|*.pyi|*.js|*.mjs|*.cjs|*.jsx|*.ts|*.tsx|*.go|*.java|*.kt|*.kts|*.cs|*.rb|*.php|*.swift|*.rs|*.scala|*.dart)
-      name_sed='s/([:=])[[:space:]]*[a-z_][a-z_.]*([^a-z0-9_./+=-]|$)/\1\2/g' ;;
+      # A plain name followed by ANOTHER assignment ("A_KEY=x B_KEY=x") is marked with @ first,
+      # because dropping it would make the second assignment read as the first one's value. Twice,
+      # since each match consumes the next assignment's = and three in a row need a second pass.
+      name_sed='s/([:=])[[:space:]]*[a-z_][a-z_.]*([[:space:]]+[a-z_][a-z0-9_.]*[:=])/\1@\2/g;s/([:=])[[:space:]]*[a-z_][a-z_.]*([[:space:]]+[a-z_][a-z0-9_.]*[:=])/\1@\2/g;s/([:=])[[:space:]]*[a-z_][a-z_.]*([^a-z0-9_./+=-]|$)/\1\2/g'
+      prose_sed='s~((#|//).*[:=])[[:space:]]*[a-z]+(/[a-z]+)+[[:space:]]+[a-z]+~\1~g' ;;
   esac
   # Case-sensitive token patterns.
   if printf '%s' "$text" | grep -Eq '\-\-\-\-\-BEGIN ([A-Z]+ )?PRIVATE KEY\-\-\-\-\-|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|gh[opsu]_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{22,}|xox[baprs]-[0-9A-Za-z-]{10,}|xapp-[0-9A-Za-z-]{10,}|AIza[0-9A-Za-z_-]{35}|sk_live_[0-9A-Za-z]{24,}|rk_live_[0-9A-Za-z]{24,}|sk-ant-[0-9A-Za-z_-]{20,}|sk-[A-Za-z0-9]{32,}|eyJ[A-Za-z0-9_=-]{8,}\.[A-Za-z0-9_=-]{8,}\.[A-Za-z0-9_=-]{8,}'; then
@@ -80,6 +88,7 @@ scan_text_for_secrets() {
       | tr 'A-Z' 'a-z' \
       | sed -E 's/([:=])[[:space:]]*[a-z_][a-z0-9_.]*\(/\1(/g' \
       | sed -E "$name_sed" \
+      | sed -E "$prose_sed" \
       | grep -Eq '(api[_-]?key|secret([_-]?key)?|client[_-]?secret|access[_-]?key|auth[_-]?token|private[_-]?key|refresh[_-]?token|bearer[_-]?token|signing[_-]?key|encryption[_-]?key|session[_-]?secret|connection[_-]?string|password|passwd|pwd)["'"'"' ]*[:=]["'"'"' ]*[a-z0-9/+_=.-]{12,}'; then
     hit="${hit:+$hit,}assignment"
   fi
@@ -165,15 +174,19 @@ case "$TOOL" in
     if [ -f "$PY_HOOK" ]; then
       PY="${SECRET_SCAN_PYTHON:-}"
       if [ -z "$PY" ]; then
-        PY=$(command -v python3 2>/dev/null || true)
-        if [ -z "$PY" ] && [ -x /usr/bin/python3 ]; then
-          PY=/usr/bin/python3
-        fi
+        # A Windows PATH can hold a python3 that only offers to install Python, so
+        # a candidate counts only when it runs.
+        for CANDIDATE in python3 python /usr/bin/python3; do
+          if command -v "$CANDIDATE" >/dev/null 2>&1 && "$CANDIDATE" -c '' >/dev/null 2>&1; then
+            PY=$(command -v "$CANDIDATE")
+            break
+          fi
+        done
       fi
       if [ -z "$PY" ]; then
         deny \
-          "scanner error: no python3 found, so the git commit / push secret scan did NOT run. This is not a clean result." \
-          "Install python3, or set SECRET_SCAN_PYTHON to its path, and re-run."
+          "scanner error: no working Python found, so the git commit / push secret scan did NOT run. This is not a clean result." \
+          "Install Python 3, or set SECRET_SCAN_PYTHON to its path, and re-run."
       fi
       "$PY" "$PY_HOOK" <<< "$INPUT"
       STATUS=$?

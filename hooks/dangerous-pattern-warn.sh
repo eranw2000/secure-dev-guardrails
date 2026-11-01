@@ -52,8 +52,15 @@ if [ "$IS_SHELL" != 1 ]; then
 # code line forms, so it is blanked too.
 sed -E -e 's/(SEC|PRIV)(-[A-Z]+)+-[0-9]+//g' \
        -e 's/(^|[^A-Za-z0-9])([Tt]he|[Aa]n?) (MD5|SHA1|DES|RC4) ([a-z])/\1\2 _ \4/g' "$FILE_PATH" \
-  | grep -Eq '(^|[^A-Za-z0-9])(MD5|SHA1|DES|RC4)([^A-Za-z0-9]|$)|"ECB"|/ECB/|MessageDigest\.getInstance\("(MD5|SHA-1)"\)' \
+  | grep -Eq '(^|[^A-Za-z0-9])(MD5|SHA1|DES|RC4)([^A-Za-z0-9]|$)|MessageDigest\.getInstance\("(MD5|SHA-1)"\)' \
   && add "SEC-CRYPTO-02" "weak crypto primitive (MD5/SHA1/DES/RC4/ECB)"
+# ECB is also the European Central Bank, so its two shapes count only in a file that names a
+# cipher. With no cipher word in the file, "ECB" has nothing to be the mode of.
+if ! echo -e "$FINDINGS" | grep -q 'SEC-CRYPTO-02'; then
+  grep -Eq '"ECB"|/ECB/' "$FILE_PATH" \
+    && grep -Eiq '(^|[^A-Za-z0-9])(cipher|ciphers|aes|cryptography|createCipher|createCipheriv)([^A-Za-z0-9]|$)' "$FILE_PATH" \
+    && add "SEC-CRYPTO-02" "weak crypto primitive (MD5/SHA1/DES/RC4/ECB)"
+fi
 
 # --- SEC-AUTH-03: a token check switched OFF. Only the explicit switches are matched, never the
 # absence of a check, because an absence has no line to match and guessing at it produces the
@@ -232,7 +239,7 @@ case "$FILE_PATH" in
     # both reviewers caught it, this hook ran on every edit and was silent because it skipped
     # .sh files outright.
     # Line-based and deliberately narrow; what it treats as SAFE is the list in the code.
-    SHELL_HITS=$(python3 "$(dirname "$0")/_shell_secret_argv.py" "$FILE_PATH" 2>/dev/null)
+    SHELL_HITS=$( { python3 "$(dirname "$0")/_shell_secret_argv.py" "$FILE_PATH" || python "$(dirname "$0")/_shell_secret_argv.py" "$FILE_PATH"; } 2>/dev/null)
     [ -n "$SHELL_HITS" ] && add "SEC-SECRET-03" "a credential-named variable passed as a command argument (line ${SHELL_HITS}); argv is readable by ps, so pipe it on stdin (printf is a builtin) or write it to a mode-600 file"
     ;;
 esac

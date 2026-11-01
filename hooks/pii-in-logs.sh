@@ -23,13 +23,22 @@
 # and an entry naming only a `fingerprint` waives nothing anywhere. This hook used to point a
 # reader at both. Rewrite the line, or narrow the pattern below and say why in the commit.
 
+# The first interpreter that really runs: a Windows PATH can hold a python3 that only
+# offers to install Python.
+pick_python() {
+  local c
+  for c in python3 python "py -3"; do
+    if $c -c '' >/dev/null 2>&1; then echo "$c"; return; fi
+  done
+}
+
 set -u
 
 INPUT=$(cat)
 # Without jq, or with input jq cannot read, the tool name would come back empty and
 # every call would be allowed unchecked. That is a check that never ran, so block.
 if ! command -v jq >/dev/null 2>&1; then
-  printf '%s\n' "privacy check error: jq is not installed, so this check could not read the tool call. This is not a clean result. Install jq (a command you run yourself with \`! brew install jq\`, or your package manager, runs outside this hook) and re-run." >&2
+  printf '%s\n' "privacy check error: jq is not installed, so this check could not read the tool call. This is not a clean result. Install jq (a command you run yourself with \`! brew install jq\` on macOS, \`! winget install jqlang.jq\` on Windows, or your package manager, runs outside this hook) and re-run." >&2
   exit 2
 fi
 if ! TOOL=$(printf '%s' "$INPUT" | jq -er '.tool_name // ""' 2>/dev/null); then
@@ -407,6 +416,13 @@ robot_view() {
     -e 'ta'
 }
 
+# A Render service's SSH address, `srv-<id> at ssh.<region>.render.com`, names a machine: no
+# mailbox can sit behind it. Removed before the VALUE test only, and only in exactly that shape.
+# Both edges are an allow list, so a person glued to either side of it still blocks.
+machine_view() {
+  printf '%s' "$1" | sed -E "s/(^|[[:space:]\"])srv-[a-z0-9]+@ssh\.[a-z0-9-]+\.render\.com([[:space:]\"':]|\$)/\1 \2/g"
+}
+
 # A FILE PATH is a name on disk, not a person's field, so a path-like word is removed before the
 # FIELD-NAME test only: a word holding a "/", and a word ending in a data-file extension. A word
 # holding "{" or "(" is kept, so an interpolated field inside a path (`f"/data/{u.<field>}"`) is
@@ -426,7 +442,10 @@ path_view() {
 # scanned as before: a failure can only make this stricter.
 SCAN="$CONTENT"
 if [ "$TOOL" = "Bash" ]; then
-  SPLIT=$(printf '%s' "$CONTENT" | python3 "$(dirname "$0")/_pii_bash_lines.py" 2>/dev/null) && [ -n "$SPLIT" ] && SCAN="$SPLIT"
+  PYCMD=$(pick_python)
+  if [ -n "$PYCMD" ]; then
+    SPLIT=$(printf '%s' "$CONTENT" | $PYCMD "$(dirname "$0")/_pii_bash_lines.py" 2>/dev/null) && [ -n "$SPLIT" ] && SCAN="$SPLIT"
+  fi
 fi
 
 # Real newlines, printed with %s. A flagged line is source text, so a backslash in it is text:
@@ -452,7 +471,7 @@ while IFS= read -r line; do
   # VALUE tests first. Each one sees an actual piece of personal data on the line, so each
   # one BLOCKS.
   # Email: unambiguous, block on sight.
-  pv=$(robot_view "$(reserved_view "$(predicate_view "$line")")")
+  pv=$(machine_view "$(robot_view "$(reserved_view "$(predicate_view "$line")")")")
   if echo "$pv" | grep -Eq "$PII_EMAIL"; then add_hit "email-in-log" "$line"; continue; fi
   # Card: only a Luhn-valid number counts (ignores order numbers, timestamps, ids).
   if line_has_card "$line"; then add_hit "card-in-log" "$line"; continue; fi

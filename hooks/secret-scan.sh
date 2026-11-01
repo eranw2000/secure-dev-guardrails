@@ -31,7 +31,7 @@ INPUT=$(cat)
 # Without jq, or with input jq cannot read, the tool name would come back empty and
 # every call would fall through to "allow". That is a scan that never ran, so block.
 if ! command -v jq >/dev/null 2>&1; then
-  printf '%s\n' "scanner error: jq is not installed, so this secret scan could not read the tool call. This is not a clean result. Install jq (a command you run yourself with \`! brew install jq\`, or your package manager, runs outside this hook) and re-run." >&2
+  printf '%s\n' "scanner error: jq is not installed, so this secret scan could not read the tool call. This is not a clean result. Install jq (a command you run yourself with \`! brew install jq\` on macOS, \`! winget install jqlang.jq\` on Windows, or your package manager, runs outside this hook) and re-run." >&2
   exit 2
 fi
 if ! TOOL=$(printf '%s' "$INPUT" | jq -er '.tool_name // ""' 2>/dev/null); then
@@ -56,9 +56,17 @@ scan_text_for_secrets() {
   # Config and shell files are NOT code here: YAML, .env, compose and export lines
   # carry real secrets without quotes.
   local name_sed='s/^//'
+  # Also in a CODE file, prose in a comment: after `#` or `//`, a colon or = followed by words
+  # joined by a slash and then MORE words (keyword, colon, `before/after are shown`) is a
+  # sentence, not a value. A comment value with digits, or with no words after it, still matches.
+  local prose_sed='s/^//'
   case "$(printf '%s' "${path##*/}" | tr 'A-Z' 'a-z')" in
     *.py|*.pyi|*.js|*.mjs|*.cjs|*.jsx|*.ts|*.tsx|*.go|*.java|*.kt|*.kts|*.cs|*.rb|*.php|*.swift|*.rs|*.scala|*.dart)
-      name_sed='s/([:=])[[:space:]]*[a-z_][a-z_.]*([^a-z0-9_./+=-]|$)/\1\2/g' ;;
+      # A plain name followed by ANOTHER assignment ("A_KEY=x B_KEY=x") is marked with @ first,
+      # because dropping it would make the second assignment read as the first one's value. Twice,
+      # since each match consumes the next assignment's = and three in a row need a second pass.
+      name_sed='s/([:=])[[:space:]]*[a-z_][a-z_.]*([[:space:]]+[a-z_][a-z0-9_.]*[:=])/\1@\2/g;s/([:=])[[:space:]]*[a-z_][a-z_.]*([[:space:]]+[a-z_][a-z0-9_.]*[:=])/\1@\2/g;s/([:=])[[:space:]]*[a-z_][a-z_.]*([^a-z0-9_./+=-]|$)/\1\2/g'
+      prose_sed='s~((#|//).*[:=])[[:space:]]*[a-z]+(/[a-z]+)+[[:space:]]+[a-z]+~\1~g' ;;
   esac
   # Case-sensitive token patterns.
   if printf '%s' "$text" | grep -Eq '\-\-\-\-\-BEGIN ([A-Z]+ )?PRIVATE KEY\-\-\-\-\-|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|gh[opsu]_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{22,}|xox[baprs]-[0-9A-Za-z-]{10,}|xapp-[0-9A-Za-z-]{10,}|AIza[0-9A-Za-z_-]{35}|sk_live_[0-9A-Za-z]{24,}|rk_live_[0-9A-Za-z]{24,}|sk-ant-[0-9A-Za-z_-]{20,}|sk-[A-Za-z0-9]{32,}|eyJ[A-Za-z0-9_=-]{8,}\.[A-Za-z0-9_=-]{8,}\.[A-Za-z0-9_=-]{8,}'; then
@@ -80,6 +88,7 @@ scan_text_for_secrets() {
       | tr 'A-Z' 'a-z' \
       | sed -E 's/([:=])[[:space:]]*[a-z_][a-z0-9_.]*\(/\1(/g' \
       | sed -E "$name_sed" \
+      | sed -E "$prose_sed" \
       | grep -Eq '(api[_-]?key|secret([_-]?key)?|client[_-]?secret|access[_-]?key|auth[_-]?token|private[_-]?key|refresh[_-]?token|bearer[_-]?token|signing[_-]?key|encryption[_-]?key|session[_-]?secret|connection[_-]?string|password|passwd|pwd)["'"'"' ]*[:=]["'"'"' ]*[a-z0-9/+_=.-]{12,}'; then
     hit="${hit:+$hit,}assignment"
   fi
@@ -154,8 +163,8 @@ case "$TOOL" in
     #     a push's secret can be in a committed-but-unpushed commit while the index is
     #     empty, which the old single `--staged` scan reported as clean.
     #
-    # The interpreter: SECRET_SCAN_PYTHON when set, else the python3 on PATH, else
-    # /usr/bin/python3. PATH comes first so a working Homebrew or venv python wins
+    # The interpreter: SECRET_SCAN_PYTHON when set, else the first that runs of python3,
+    # python and /usr/bin/python3, else py -3. PATH comes first so a working Homebrew or venv python wins
     # over a system stub that only asks to install developer tools. The Python hook is run, not exec'd, so its status can be read:
     # 0 allows, 2 blocks, and ANYTHING else (a crash, a missing or stub interpreter)
     # blocks too, because it means no verdict. The here-string avoids a pipe, whose
@@ -165,17 +174,25 @@ case "$TOOL" in
     if [ -f "$PY_HOOK" ]; then
       PY="${SECRET_SCAN_PYTHON:-}"
       if [ -z "$PY" ]; then
-        PY=$(command -v python3 2>/dev/null || true)
-        if [ -z "$PY" ] && [ -x /usr/bin/python3 ]; then
-          PY=/usr/bin/python3
+        # A Windows PATH can hold a python3 that only offers to install Python, so
+        # a candidate counts only when it runs.
+        for CANDIDATE in python3 python /usr/bin/python3; do
+          if command -v "$CANDIDATE" >/dev/null 2>&1 && "$CANDIDATE" -c '' >/dev/null 2>&1; then
+            PY=$(command -v "$CANDIDATE")
+            break
+          fi
+        done
+        if [ -z "$PY" ] && command -v py >/dev/null 2>&1 && py -3 -c '' >/dev/null 2>&1; then
+          PY=$(command -v py)
+          PY_FLAG=-3
         fi
       fi
       if [ -z "$PY" ]; then
         deny \
-          "scanner error: no python3 found, so the git commit / push secret scan did NOT run. This is not a clean result." \
-          "Install python3, or set SECRET_SCAN_PYTHON to its path, and re-run."
+          "scanner error: no working Python found, so the git commit / push secret scan did NOT run. This is not a clean result." \
+          "Install Python 3, or set SECRET_SCAN_PYTHON to its path, and re-run."
       fi
-      "$PY" "$PY_HOOK" <<< "$INPUT"
+      "$PY" ${PY_FLAG:-} "$PY_HOOK" <<< "$INPUT"
       STATUS=$?
       case "$STATUS" in
         0|2) exit "$STATUS" ;;

@@ -30,10 +30,33 @@ esac
 LOWER=$(printf '%s' "$FILE_PATH" | tr 'A-Z' 'a-z')
 CTX=""
 
+# "session" alone is often not a login: it can be a note about a work session, or a tool's own
+# config folder. So for this one word, a note file and the ~/.claude folder are quiet. Code
+# anywhere else still fires, an app checked out under .claude/worktrees counts as code, a path
+# holding /../ or /./ is never quiet, and every other sign-in word is not narrowed.
+SESSION_WORD=""
+case "$LOWER" in
+  *session*)
+    SESSION_WORD=1
+    # A doubled slash names the same place, so it must not change the answer.
+    case "$(printf '%s' "$LOWER" | tr -s '/')" in
+      */../*|*/./*) : ;;
+      *.md|*.txt|*.log|*.jsonl) SESSION_WORD="" ;;
+      */.claude/worktrees/*) : ;;
+      */.claude/*) SESSION_WORD="" ;;
+    esac ;;
+esac
+
+AUTH_PATH=""
 case "$LOWER" in
   # oidc/openid/saml/signin/jwt/jwks cover sign-in code whose file names use none of
   # the older words (an oidc.ts module, a signin route).
-  *auth*|*login*|*session*|*oauth*|*token*|*permission*|*authoriz*|*rbac*|*acl*|*middleware*|*oidc*|*openid*|*saml*|*signin*|*sign-in*|*sign_in*|*jwt*|*jwks*)
+  *auth*|*login*|*oauth*|*token*|*permission*|*authoriz*|*rbac*|*acl*|*middleware*|*oidc*|*openid*|*saml*|*signin*|*sign-in*|*sign_in*|*jwt*|*jwks*)
+    AUTH_PATH=1 ;;
+esac
+[ -n "$SESSION_WORD" ] && AUTH_PATH=1
+case "$AUTH_PATH" in
+  1)
     CTX="${CTX}AUTH/ACCESS path edited ($FILE_PATH). Check SEC-WEB-02 (object-level authorization, not just authentication) and PRIV-ACC-01 (personal-data access restricted to roles that need it). Confirm the change does not widen who can reach a resource or weaken an authz check.\nAuthentication rules for this path: SEC-AUTH-01 every non-public route authenticates server-side, and a public one is public by a decision you can point at. SEC-AUTH-02 no home-grown scheme; use the platform, an established library, or an identity provider. SEC-AUTH-03 a token's issuer, audience, signature, expiry and intended type are all checked, and decoding is not verifying; the signature is checked against the key set the provider publishes for THIS app (Entra: keys?appid=<client id>, since an app ever set up for SAML signs with its own certificate) with the algorithm pinned. SEC-AUTH-07 every answer from the identity provider is classified fail-closed: only the documented success shape passes, only a named outage (5xx, 429, 408, temporarily_unavailable, no connection) keeps the session, anything else (an HTML or empty 4xx, a 2xx that is not a token, a redirect) ends it. SEC-AUTH-04 absolute lifetime and idle timeout, a new session id when privilege changes, server-side invalidation on logout and password change. SEC-AUTH-05 repeated failures rate-limited per account and per source, with the counter in a store every worker shares. SEC-AUTH-06 a failed login does not reveal which half failed.\n\n" ;;
 esac
 case "$LOWER" in

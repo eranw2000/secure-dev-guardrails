@@ -60,7 +60,7 @@ case "$AUTH_PATH" in
     CTX="${CTX}AUTH/ACCESS path edited ($FILE_PATH). Check SEC-WEB-02 (object-level authorization, not just authentication) and PRIV-ACC-01 (personal-data access restricted to roles that need it). Confirm the change does not widen who can reach a resource or weaken an authz check.\nAuthentication rules for this path: SEC-AUTH-01 every non-public route authenticates server-side, and a public one is public by a decision you can point at. SEC-AUTH-02 no home-grown scheme; use the platform, an established library, or an identity provider. SEC-AUTH-03 a token's issuer, audience, signature, expiry and intended type are all checked, and decoding is not verifying; the signature is checked against the key set the provider publishes for THIS app (Entra: keys?appid=<client id>, since an app ever set up for SAML signs with its own certificate) with the algorithm pinned. SEC-AUTH-07 every answer from the identity provider is classified fail-closed: only the documented success shape passes, only a named outage (5xx, 429, 408, temporarily_unavailable, no connection) keeps the session, anything else (an HTML or empty 4xx, a 2xx that is not a token, a redirect) ends it. SEC-AUTH-04 absolute lifetime and idle timeout, a new session id when privilege changes, server-side invalidation on logout and password change. SEC-AUTH-05 repeated failures rate-limited per account and per source, with the counter in a store every worker shares. SEC-AUTH-06 a failed login does not reveal which half failed.\n\n" ;;
 esac
 case "$LOWER" in
-  *crypto*|*encrypt*|*cipher*|*hash*|*secret*|*signing*|*jwt*|*keystore*)
+  *crypto*|*encrypt*|*cipher*|*hash*|*signing*|*jwt*|*keystore*)
     CTX="${CTX}CRYPTO path edited ($FILE_PATH). Check SEC-CRYPTO-01 (no disabled TLS verification), SEC-CRYPTO-02 (no MD5/SHA-1/DES/ECB/static-IV; use AES-GCM and a slow KDF for passwords), SEC-CRYPTO-03 (no custom crypto).\n\n" ;;
 esac
 # Only words that mean money anywhere in the path. "card" and "charge" are left out
@@ -97,6 +97,19 @@ esac
 # (103,204 of 103,204 files, measured 2026-08-28; again on every write 2026-09-14), which
 # buried the reminders that mean something. `users/models.py` and `profile.html` still fire.
 NEAR=$(printf '%s' "$FILE_PATH" | awk -F/ '{ if (NF > 1) print $(NF-1) "/" $NF; else print $NF }' | tr 'A-Z' 'a-z')
+# Claude Code names a project's notes folder after its path (`-Users-me`), so in that one folder
+# the name says nothing about personal data: only the file's own name counts there.
+case "$LOWER" in
+  */.claude/projects/-*/*/*) : ;;
+  */.claude/projects/-*/*) NEAR=$(basename "$LOWER") ;;
+esac
+# A script directly in a Claude Code project notes folder is session scratch, so a word in its name
+# is not a personal-data path. Notes and data files can hold the real thing and still fire, and so
+# do a deeper path and one that climbs.
+case "$LOWER" in
+  */../*|*/./*|*/.claude/projects/-*|*/.claude/projects/*/*/*) : ;;
+  */.claude/projects/*/*.py|*/.claude/projects/*/*.sh) NEAR="" ;;
+esac
 case "$NEAR" in
   *user*|*account*|*profile*|*customer*|*subscriber*|*member*|*contact*|*person*|*patient*|*pii*|*gdpr*|*privacy*)
     CTX="${CTX}PERSONAL-DATA path edited ($FILE_PATH). Check the privacy rules: PRIV-MIN-01 (only fields needed for the purpose), PRIV-RET-01/02 (retention period + reachable deletion path), PRIV-RIGHTS-01 (the new data is reachable by access/portability/opt-out flows), PRIV-LOG-01 (no PII in logs). If you added a new personal-data store, confirm the deletion path and subject-rights tooling know about it.\n\n" ;;

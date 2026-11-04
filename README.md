@@ -26,7 +26,13 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
   a rule can be defended in an audit rather than only asserted.
 - `hooks/`, Claude Code hooks. `secret-scan.sh` and `pii-in-logs.sh` hard-block;
   `sensitive-file-context.sh` and `dangerous-pattern-warn.sh` warn/inject. Portable bash + jq,
-  POSIX grep classes (run on BSD and GNU grep).
+  POSIX grep classes (run on BSD and GNU grep). Four Python guards read each Bash command:
+  `destructive-command-guard.py` blocks commands that destroy work no tool can recover;
+  `chain-abort-guard.py` warns when an early clause can skip a later write;
+  `shell-status-guard.py` warns when a status belongs to a pipe's last stage, and blocks a wait
+  loop that matches itself; `write-then-remote-guard.py` warns on a file write and a remote
+  call in one command. `secret-scan-git.py` follows a repository folder named by a shell
+  variable, and refuses a folder it cannot work out.
 - `settings/`, `managed-settings.json` (enterprise policy, non-overridable) and `install.sh`
   (push via MDM with admin rights).
 - `ci/`, `security-privacy.yml` reusable GitHub Actions workflow, `.pre-commit-config.yaml`,

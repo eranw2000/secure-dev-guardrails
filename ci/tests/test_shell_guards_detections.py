@@ -70,10 +70,12 @@ LANDS_IN = [
 ]
 
 
-def verdict(hook: str, command: str, home: str) -> str:
+def verdict(hook: str, command: str, home: str, shell: str = "/bin/zsh") -> str:
     payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "session_id": "ci", "cwd": home,
                "tool_input": {"command": command}}
-    env = dict(os.environ, HOME=home, USERPROFILE=home)
+    # The `=word` and glob warnings describe zsh, so each row names its shell.
+    env = dict(os.environ, HOME=home, USERPROFILE=home, SHELL=shell)
+    env.pop("CLAUDE_CODE_SHELL", None)
     done = subprocess.run([sys.executable, str(HOOKS / hook)], input=json.dumps(payload), capture_output=True,
                           text=True, encoding="utf-8", env=env, cwd=home)
     if done.returncode == 2:
@@ -108,13 +110,16 @@ def main() -> int:
             got = verdict(hook, command, home)
             if got != want:
                 failed.append("%s %r: got %s, want %s" % (hook, command, got, want))
+        got = verdict("chain-abort-guard.py", "echo ====", home, shell="/bin/bash")
+        if got != QUIET:
+            failed.append("chain-abort-guard.py 'echo ====' under bash: got %s, want %s" % (got, QUIET))
     os.environ.pop("GUARDS_TEST_UNSET_NAME", None)
     mod = load_secret_scan()
     for command, want in LANDS_IN:
         got = lands_in(mod, command)
         if got != want:
             failed.append("secret-scan-git %r: got %s, want %s" % (command, got, want))
-    total = len(ROWS) + len(LANDS_IN)
+    total = len(ROWS) + 1 + len(LANDS_IN)
     for line in failed:
         print("FAIL", line)
     print("%d of %d passed" % (total - len(failed), total))

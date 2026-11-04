@@ -408,7 +408,7 @@ def _strip_redirections(args):
     The shared tokenizer emits `>`, `>>`, `>&` and friends as tokens of their own but
     keeps them inside the segment, so `git push -u origin b > log 2>&1` reached the
     push reader with `> log 2 >& 1` as five more refspecs, none of which resolves, and
-    the push was refused as unprovable (2026-09-11, MeitarSeating PR #23). The shell
+    the push was refused as unprovable. The shell
     never passes a redirection to git, so neither does this. A file-descriptor number
     written against its operator (`2>&1`, tokenized `2`, `>&`, `1`) goes with it.
     """

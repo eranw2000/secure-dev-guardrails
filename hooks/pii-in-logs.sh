@@ -423,6 +423,19 @@ machine_view() {
   printf '%s' "$1" | sed -E "s/(^|[[:space:]\"])srv-[a-z0-9]+@ssh\.[a-z0-9-]+\.render\.com([[:space:]\"':]|\$)/\1 \2/g"
 }
 
+# gcloud's `--account` flag picks which CLI login runs the command; its value goes to Google's
+# auth, not to any output. Removed before the VALUE test only, only on a clause whose command
+# word is gcloud, and only as a whole flag token (space or line start before it, space or line
+# end after it), so an address glued to it, printed in the remote command, or written in a
+# logger message still blocks.
+account_view() {
+  if printf '%s' "$1" | grep -Eq '^[[:space:]]*([^[:space:]]*/)?gcloud[[:space:]]'; then
+    printf '%s' "$1" | sed -E "s/(^|[[:space:]])--account(=|[[:space:]]+)[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}([[:space:]]|\$)/\1 \4/g"
+  else
+    printf '%s' "$1"
+  fi
+}
+
 # A FILE PATH is a name on disk, not a person's field, so a path-like word is removed before the
 # FIELD-NAME test only: a word holding a "/", and a word ending in a data-file extension. A word
 # holding "{" or "(" is kept, so an interpolated field inside a path (`f"/data/{u.<field>}"`) is
@@ -471,7 +484,7 @@ while IFS= read -r line; do
   # VALUE tests first. Each one sees an actual piece of personal data on the line, so each
   # one BLOCKS.
   # Email: unambiguous, block on sight.
-  pv=$(machine_view "$(robot_view "$(reserved_view "$(predicate_view "$line")")")")
+  pv=$(account_view "$(machine_view "$(robot_view "$(reserved_view "$(predicate_view "$line")")")")")
   if echo "$pv" | grep -Eq "$PII_EMAIL"; then add_hit "email-in-log" "$line"; continue; fi
   # Card: only a Luhn-valid number counts (ignores order numbers, timestamps, ids).
   if line_has_card "$line"; then add_hit "card-in-log" "$line"; continue; fi

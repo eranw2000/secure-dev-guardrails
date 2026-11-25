@@ -8,9 +8,10 @@ outside this pack is imported. Every command that must fire has a twin that must
 quiet, because a guard that fires on everything passes half its tests. Commands are only
 read by the hooks, never run.
 
-The last group asks secret-scan-git.py which repository a commit or push lands in when
-the folder is named by a shell variable. None means the command is refused, and a None
-with no refusal would be a silent pass, so `lands_in` fails the row in that case.
+The last group asks secret-scan-git.py which repository a commit or push lands in. A
+folder written out is followed; a folder named by a variable, a substitution or a pattern
+is refused. None means the command is refused, and a None with no refusal would be a
+silent pass, so `lands_in` fails the row in that case.
 """
 
 from __future__ import annotations
@@ -54,12 +55,15 @@ ROWS = [
 LANDS_IN = [
     ("git -C /lit commit -m x", "/lit"),
     ("cd /lit && git push origin main", "/lit"),
-    ("W=/a/r; git -C $W commit -m x", "/a/r"),
-    ('W=/a/r; git -C "$W" push origin main', "/a/r"),
-    ("R=/a/r; cd $R && git commit -m x", "/a/r"),
-    ("R=/a/r; cd $R && git push origin main", "/a/r"),
-    ('set -e; D=/a/r; echo "D=$D"; git -C $D commit', "/a/r"),
-    ("T=$(mktemp -d /tmp/x.XXXX); cd $T && git commit -m i", "/tmp"),
+    # A folder named by a variable or a substitution is refused, even a plain one:
+    # the hook asks for the real path rather than reading shell text to guess it.
+    ("W=/a/r; git -C $W commit -m x", None),
+    ('W=/a/r; git -C "$W" push origin main', None),
+    ("R=/a/r; cd $R && git commit -m x", None),
+    ("R=/a/r; cd $R && git push origin main", None),
+    ('set -e; D=/a/r; echo "D=$D"; git -C $D commit', None),
+    ("T=$(mktemp -d /tmp/x.XXXX); cd $T && git commit -m i", None),
+    ('cd -- "$W" && git commit -m x', None),
     ("W=/s; if false; then W=/c; fi; git -C $W commit", None),
     ("W=/s; (W=/c); git -C $W commit", None),
     ("if true; then R=/s; else R=/c; fi; cd $R && git commit", None),

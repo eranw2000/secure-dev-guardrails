@@ -40,6 +40,9 @@ esac
 FINDINGS=""
 add() { FINDINGS="${FINDINGS}\n  [$1] $2"; }
 
+# Every rule below, over whatever FILE_PATH names at the moment. A function so the same rules
+# can also read the file as it was before an Edit, and the new text alone (narrow_to_edit).
+run_rules() {
 IS_SHELL=0
 case "$FILE_PATH" in *.sh|*.bash) IS_SHELL=1 ;; esac
 
@@ -122,6 +125,16 @@ case "$FILE_PATH" in
   *.py)
     grep -Eqn '(^|[^A-Za-z0-9_])(eval|exec)[[:space:]]*\(|pickle\.loads?[[:space:]]*\(|subprocess\.(call|run|Popen|check_output)\([^)]*shell[[:space:]]*=[[:space:]]*True|os\.system[[:space:]]*\(' "$FILE_PATH" \
       && add "SEC-INJ-02/03" "eval/exec/pickle/shell=True/os.system"
+    # SEC-INJ-04: a spreadsheet written cell by cell with no text-only write anywhere in the
+    # file. openpyxl stores any "=..." string as a formula, so a cell written from user
+    # data can run as a formula when the file is opened. Needs the library imported, a sheet-shaped
+    # write, and none of the three safe forms, so a list .append in an unrelated file is quiet.
+    # A .cell( is a write only with value= or a third positional argument: ws.cell(row=, column=).value is a READ
+    if grep -Eq '^[[:space:]]*(import|from)[[:space:]]+(openpyxl|xlsxwriter)' "$FILE_PATH" \
+       && grep -Eq '(sheet|ws|worksheet)[A-Za-z0-9_]*\.(append|write)[[:space:]]*\(|(sheet|ws|worksheet)[A-Za-z0-9_]*\.cell[[:space:]]*\(([^)]*value[[:space:]]*=|[^,()]+,[^,()]+,[^,()=]+\))' "$FILE_PATH" \
+       && ! grep -Eq 'data_type[[:space:]]*=[[:space:]]*["'\'']s["'\'']|write_string[[:space:]]*\(|strings_to_formulas["'\'']?[[:space:]]*:[[:space:]]*False' "$FILE_PATH"; then
+      add "SEC-INJ-04" "spreadsheet cells written with no text-only write: a value starting with = becomes a live formula (use data_type=\"s\" or write_string; reuse the repo's safe writer)"
+    fi
     # yaml.load without a safe Loader (emulate the negative lookahead with a second grep).
     if grep -En 'yaml\.load[[:space:]]*\(' "$FILE_PATH" | grep -Evq 'safe_load|Loader[[:space:]]*='; then
       add "SEC-INJ-03" "yaml.load without SafeLoader (use yaml.safe_load)"
@@ -202,7 +215,16 @@ case "$FILE_PATH" in
       && add "SEC-API-02" "request data unpacked into a class constructor (bind an allowlist of fields)"
     ;;
   *.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs)
-    grep -Eqn '(^|[^A-Za-z0-9_])eval[[:space:]]*\(|new Function[[:space:]]*\(|child_process|\.exec[[:space:]]*\(|execSync[[:space:]]*\(' "$FILE_PATH" \
+    # A regex literal's .exec matches text and runs nothing, so it is removed before the .exec test
+    # (a common case). Removed by occurrence, so a real
+    # call on the same line still fires. Test: tests/test_regex_exec_rule.py.
+    # The same for a regex this file holds in a named variable: only that name's .exec is removed.
+    regex_vars=$( { grep -Eo '(const|let|var)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(:[^=]*)?=[[:space:]]*(new[[:space:]]+RegExp[[:space:]]*\(|/[^/*[:space:]])' "$FILE_PATH" || true; } \
+      | sed -E 's/^(const|let|var)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\2/' | sort -u | paste -sd'|' - )
+    drop_regex_vars='s#^$##'
+    [ -n "$regex_vars" ] && drop_regex_vars="s#(^|[^A-Za-z0-9_.\$])($regex_vars)\.exec[[:space:]]*\(#\1#g"
+    { grep -Eq '(^|[^A-Za-z0-9_])eval[[:space:]]*\(|new Function[[:space:]]*\(|child_process|execSync[[:space:]]*\(' "$FILE_PATH" \
+      || sed -E -e 's#/[a-z]*\.exec[[:space:]]*\(##g' -e "$drop_regex_vars" "$FILE_PATH" | grep -Eq '\.exec[[:space:]]*\('; } \
       && add "SEC-INJ-02" "eval/new Function/child_process exec"
     grep -Eqn 'innerHTML[[:space:]]*=|dangerouslySetInnerHTML|document\.write[[:space:]]*\(|insertAdjacentHTML' "$FILE_PATH" \
       && add "SEC-WEB-01" "untrusted data into innerHTML/dangerouslySetInnerHTML/document.write"
@@ -254,7 +276,41 @@ case "$FILE_PATH" in
     [ -n "$SHELL_HITS" ] && add "SEC-SECRET-03" "a credential-named variable passed as a command argument (line ${SHELL_HITS}); argv is readable by ps, so pipe it on stdin (printf is a builtin) or write it to a mode-600 file"
     ;;
 esac
+}
 
+# Report only what an Edit brought in. Scanning the whole file reported an old finding again on
+# every edit of that file, whatever the edit touched. A finding stays when the file did not
+# have it before, or when the new text has it on its own, so a SECOND csrf_exempt in a file that
+# already has one still warns. When the edit cannot be placed the whole-file result stands.
+# Test: tests/test_edit_scope.py.
+SCOPE_DIR=""
+trap '[ -n "$SCOPE_DIR" ] && rm -rf "$SCOPE_DIR"' EXIT
+no_line_numbers() { sed -E 's/\(line [^)]*\)/(line)/'; }
+narrow_to_edit() {
+  local real="$FILE_PATH" all="$FINDINGS" ext="${FILE_PATH##*.}" py before added line key kept=""
+  py=$(pick_python)
+  [ -n "$py" ] || return 0
+  SCOPE_DIR=$(mktemp -d 2>/dev/null) || return 0
+  printf '%s' "$INPUT" | jq -c '.tool_input' \
+    | $py "$(dirname "$0")/_edit_scope.py" "$real" "$SCOPE_DIR" 2>/dev/null || return 0
+  FILE_PATH="$SCOPE_DIR/before.$ext"; FINDINGS=""; run_rules
+  before=$(printf '%b' "$FINDINGS" | no_line_numbers)
+  FILE_PATH="$SCOPE_DIR/added.$ext"; FINDINGS=""; run_rules
+  added=$(printf '%b' "$FINDINGS" | no_line_numbers)
+  FILE_PATH="$real"
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    key=$(printf '%s\n' "$line" | no_line_numbers)
+    if ! grep -Fxq -- "$key" <<<"$before" || grep -Fxq -- "$key" <<<"$added"; then
+      kept="${kept}\n${line}"
+    fi
+  done < <(printf '%b\n' "$all")
+  FINDINGS="$kept"
+}
+
+run_rules
+[ -z "$FINDINGS" ] && exit 0
+narrow_to_edit
 [ -z "$FINDINGS" ] && exit 0
 FINDINGS=$(printf '%b' "$FINDINGS")
 

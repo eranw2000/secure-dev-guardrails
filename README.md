@@ -30,9 +30,11 @@ Source: [docs/three-ring-flow.drawio](docs/three-ring-flow.drawio) (editable in 
   `destructive-command-guard.py` blocks commands that destroy work no tool can recover;
   `chain-abort-guard.py` warns when an early clause can skip a later write;
   `shell-status-guard.py` warns when a status belongs to a pipe's last stage, and blocks a wait
-  loop that matches itself; `write-then-remote-guard.py` warns on a file write and a remote
-  call in one command. `secret-scan-git.py` follows a repository folder named by a shell
-  variable, and refuses a folder it cannot work out.
+  loop that matches itself; it also runs after each Bash call and warns when a call that hit
+  its timeout was moved to the background while its last clause is not the work;
+  `write-then-remote-guard.py` warns on a file write and a remote call in one command.
+  `secret-scan-git.py` refuses a commit or push whose folder is a variable, a substitution or
+  a pattern, and asks for the real path.
 - `settings/`, `managed-settings.json` (enterprise policy, non-overridable) and `install.sh`
   (push via MDM with admin rights).
 - `ci/`, `security-privacy.yml` reusable GitHub Actions workflow, `.pre-commit-config.yaml`,

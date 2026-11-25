@@ -282,7 +282,6 @@ esac
 # every edit of that file, whatever the edit touched. A finding stays when the file did not
 # have it before, or when the new text has it on its own, so a SECOND csrf_exempt in a file that
 # already has one still warns. When the edit cannot be placed the whole-file result stands.
-# Test: tests/test_edit_scope.py.
 SCOPE_DIR=""
 trap '[ -n "$SCOPE_DIR" ] && rm -rf "$SCOPE_DIR"' EXIT
 no_line_numbers() { sed -E 's/\(line [^)]*\)/(line)/'; }

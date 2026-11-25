@@ -653,6 +653,109 @@ def equals_word(command):
     return None
 
 
+# Claude Code runs commands with zsh's EQUALS option OFF from this version on, so a
+# `=word` is left as it is: in a 2.1.329 shell `setopt` lists `noequals`, and
+# `echo =ls` prints `=ls`.
+EQUALS_OFF_FROM = (2, 1, 327)
+_VERSION = re.compile(r'"version"\s*:\s*"(\d+)\.(\d+)\.(\d+)"')
+
+
+def equals_off(transcript_path):
+    """True only when this session's transcript PROVES a Claude Code version that runs
+    zsh with EQUALS off. No path, an unreadable file or no version found is False, so the
+    warning keeps firing whenever the version cannot be read."""
+    if not transcript_path:
+        return False
+    try:
+        with open(transcript_path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - 65536))
+            tail = fh.read().decode("utf-8", "ignore")
+    except OSError:
+        return False
+    found = _VERSION.findall(tail)
+    if not found:
+        return False
+    return tuple(int(x) for x in found[-1]) >= EQUALS_OFF_FROM
+
+
+def _quote_state(text):
+    """Per character: (inside single quotes, inside double quotes). A quote mark itself counts as outside."""
+    single, double = [], []
+    in_s = in_d = escaped = False
+    for c in text:
+        if escaped:
+            escaped = False
+        elif c == "\\" and not in_s:
+            escaped = True
+        elif c == "'" and not in_d:
+            in_s = not in_s
+            single.append(False)
+            double.append(False)
+            continue
+        elif c == '"' and not in_s:
+            in_d = not in_d
+            single.append(False)
+            double.append(False)
+            continue
+        single.append(in_s)
+        double.append(in_d)
+    return single, double
+
+
+_CMD_ASSIGN = re.compile(
+    r"(?:^|(?<=[\s;&|(]))(?:(?:export|local|typeset|declare|readonly)\s+)?"
+    r"([A-Za-z_]\w*)=(?:\"([^\"]*)\"|'([^']*)')")
+_CMD_USE = re.compile(
+    r"(?:^|(?<=[;&|(\n`])|(?<=\$\())[ \t]*\"?\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))(?=[\s\"`);]|$)")
+
+
+def _one_path(value):
+    """True only when a spaced value is plainly ONE path, which zsh runs as it is.
+
+    `C="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; "$C"` runs (one
+    word, one path). Allowed only when the value starts as a path
+    and no later word looks like an argument (`-x`, a second path, `$X`, `a=b`).
+    """
+    words = value.split()
+    if not re.match(r"(/|~/|\$HOME/|\$\{HOME\}/)", words[0]):
+        return False
+    return not any(w[:1] in "-/~$" or "=" in w for w in words[1:])
+
+
+def command_var(command):
+    """The text where a command kept WITH SPACES in a variable is run as `$NAME`, or None.
+
+    zsh does not split a parameter into words, so after `P="psql -h x"` the word `$P`
+    (quoted or not) names ONE command, "psql -h x": `command not found`, and `$($P ...)`
+    comes back empty, so a later clause runs with an empty value. In zsh 5.9 an
+    array `P=(psql -h x)`, `${=P}` and a one-word value all run, and
+    bash splits it and runs it. Fires only on an assignment it can SEE earlier in the
+    same command, with a value holding whitespace; a variable set elsewhere is a value
+    this cannot read, so it stays quiet rather than guess.
+    """
+    text = _strip_heredocs(command)
+    single, double = _quote_state(text)
+    spaced = {}
+    for m in _CMD_ASSIGN.finditer(text):
+        if single[m.start(1)]:
+            continue
+        value = m.group(2) if m.group(2) is not None else m.group(3)
+        if len(value.split()) >= 2 and not _one_path(value):
+            spaced.setdefault(m.group(1), m.start())
+    if not spaced:
+        return None
+    for m in _CMD_USE.finditer(text):
+        name = m.group(1) or m.group(2)
+        # The command word must start OUTSIDE any quotes: the opening `"` of `"$P"` is
+        # allowed, a `($Q)` inside a quoted SQL string is text, not a command.
+        word = m.start() + len(m.group(0)) - len(m.group(0).lstrip(" \t"))
+        if name in spaced and spaced[name] < m.start() and not single[word] and not double[word]:
+            # Never empty: an empty excerpt reads as "no hit" to the caller.
+            return text[min(spaced[name], m.start()):m.end()].strip()[:160] or "$" + name
+    return None
+
+
 def _glob_only(command, cwd):
     """The arms that need no write and no delete, lowest priority. See step 2 below."""
     hit = option_glob(command)
@@ -661,6 +764,9 @@ def _glob_only(command, cwd):
     hit = equals_word(command)
     if hit:
         return "warn-equals", hit, ""
+    hit = command_var(command)
+    if hit:
+        return "warn-cmdvar", hit, ""
     hit = nonmatching_glob(command, cwd)
     if hit:
         return "warn-nomatch", hit, ""
@@ -803,7 +909,23 @@ def main():
             % (risky[:160],)
         )
 
+    if severity == "warn-cmdvar":
+        return _emit_warn(
+            "CHAIN-ABORT WARNING (not blocked, proceed if intended):\n"
+            "  A command with spaces is kept in a variable and then run as `$NAME`.\n\n"
+            "  the text : %s\n\n"
+            "  zsh does not split a variable into words, so it looks for ONE command named "
+            "after the whole value: `command not found` (or `no such file or directory` when "
+            "the value holds a /), nothing runs, and a `$( )` around "
+            "it comes back EMPTY, so a later clause runs with an empty value (an id, a path).\n"
+            "  Use a function: q() { psql -h host -At -c \"$1\"; }, or an array: "
+            "P=(psql -h host); $P -c ..., or ${=P} to split on purpose.\n"
+            % (risky[:160],)
+        )
+
     if severity == "warn-equals":
+        if equals_off(payload.get("transcript_path")):
+            return 0
         return _emit_warn(
             "CHAIN-ABORT WARNING (not blocked, proceed if intended):\n"
             "  A word starts with `=`, so zsh replaces it with the path of the command it "

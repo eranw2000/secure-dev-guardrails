@@ -53,6 +53,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _bash_command_parse import (  # noqa: E402
     OPERATORS,
     UnparseableCommand,
+    command_segments,
+    git_call,
+    nested_shell_command,
+    program_name,
     strip_heredocs,
     strip_prefixes,
     tokenize,
@@ -217,6 +221,31 @@ def writer_into_tail(command):
             continue
         if any(tok.split("=", 1)[0] in WRITER_FLAGS for tok in producer):
             return " | ".join(" ".join(stage) for stage in group)
+    return None
+
+
+def cut_failure_list(command):
+    """The offending pipeline, or None: a FAIL/ERROR list cut short by head or tail.
+
+    A `grep` for failure lines piped into `head`/`tail` shows SOME failures, and
+    the shortened list then gets read as the whole list: `grep -E "^(FAIL|ERROR):"
+    django.log | head` can show 10 of 11 failures. Counting (`grep -c`) is not a cut.
+    """
+    try:
+        groups = command_groups(command)
+    except (UnparseableCommand, ValueError):
+        return None
+    for group in groups:
+        for i, stage in enumerate(group[:-1]):
+            if _cmd_word(stage) not in ("grep", "egrep", "rg"):
+                continue
+            words = strip_prefixes(stage)[1:]
+            if any(w in ("-c", "--count") for w in words):
+                continue
+            if not any(("FAIL" in w or "ERROR" in w) for w in words):
+                continue
+            if any(_cmd_word(later) in ("head", "tail") for later in group[i + 1:]):
+                return " | ".join(" ".join(st) for st in group)
     return None
 
 
@@ -687,6 +716,25 @@ def _plain_string_var(text, name):
     return bool(re.search(r"(?:^|[\s;&|(])%s=(?!\()" % re.escape(name), text))
 
 
+# Shape 4: `F="a/b.py c/d.py" && git add $F`. A quoted
+# assignment whose value is a LIST (two or more path-like or flag-like words), later used
+# unquoted, reaches the command as ONE word. A sentence (`MSG="hello world"`) is left alone:
+# zsh passing it as one word is what the author wanted.
+_QUOTED_ASSIGN = re.compile(r"""(?:^|[\s;&|(])([A-Za-z_]\w*)=(?:"([^"$`\\]*)"|'([^']*)')""")
+_LISTY_WORD = re.compile(r"[/.]|^-")
+
+
+def _list_assignments(text):
+    """Names this command assigns a quoted LIST value, with the end offset of each assignment."""
+    out = []
+    for m in _QUOTED_ASSIGN.finditer(text):
+        value = m.group(2) if m.group(2) is not None else m.group(3)
+        words = value.split()
+        if len(words) >= 2 and sum(1 for w in words if _LISTY_WORD.search(w)) >= 2:
+            out.append((m.group(1), m.end()))
+    return out
+
+
 def zsh_no_split(command):
     """The offending text, or None.
     Three shapes:
@@ -705,11 +753,80 @@ def zsh_no_split(command):
     s = _SET_DASHDASH.search(text)
     if s and _plain_string_var(text[:s.start()], s.group(1)):
         return s.group(0)
+    for name, end in _list_assignments(text):
+        if _unquoted_var_uses(text[end:], name):
+            return ("%s=\"...\" then $%s unquoted" % (name, name))[:160]
+    return None
+
+
+# A Perl-style class escape. An even run of backslashes before it is a literal backslash,
+# so `\\s` is not counted.
+_PERL_ESCAPE = re.compile(r"(?<!\\)(?:\\\\)*\\[bBsSwWdD]")
+# git grep's pattern-mode flags. The LAST one given wins (measured on git 2.49).
+_GIT_GREP_MODES = {"-E": "E", "--extended-regexp": "E", "-G": "G", "--basic-regexp": "G",
+                   "-P": "P", "--perl-regexp": "P", "-F": "F", "--fixed-strings": "F"}
+# git grep short flags that take the next token as their value.
+_GIT_GREP_VALUE_SHORT = set("ABCefmO")
+
+
+def _git_grep_mode(args):
+    """The pattern mode git grep would use for these args ("E", "G", "P", "F")."""
+    mode = "G"
+    for tok in args:
+        if tok == "--":
+            break
+        if tok in _GIT_GREP_MODES:
+            mode = _GIT_GREP_MODES[tok]
+        elif len(tok) > 1 and tok[0] == "-" and tok[1] != "-":
+            for ch in tok[1:]:
+                if ch in "EGPF":
+                    mode = ch
+                if ch in _GIT_GREP_VALUE_SHORT:
+                    break
+    return mode
+
+
+def posix_escape_no_match(command, _depth=0):
+    """(tool, pattern) for a `git grep -E` or `sed` pattern holding \\b \\s \\w \\d (or their
+    capitals), else None. Those tools use POSIX regex on this Mac, where the escapes match
+    nothing, so the search finds nothing and reads as clean. On git 2.49
+    and macOS sed: `git grep -E '\\bfastify\\b'` 0 hits, the same under -P or plain git grep
+    5; `sed -n '/\\bfastify\\b/p'` 0 with or without -E. Plain grep (BSD and ugrep) handles
+    them, so it is not checked. Text inside $( ) is not read."""
+    try:
+        segments = command_segments(command)
+    except UnparseableCommand:
+        return None
+    for seg in segments:
+        inner = nested_shell_command(seg)
+        if inner and _depth < 3:
+            hit = posix_escape_no_match(inner, _depth + 1)
+            if hit:
+                return hit
+            continue
+        git = git_call(seg)
+        if git and git["subcommand"] == "grep":
+            args = git["args"]
+            if _git_grep_mode(args) == "E":
+                for tok in args:
+                    if tok == "--":
+                        break
+                    # `-e<pattern>` carries the pattern in the same word.
+                    pat = tok[2:] if tok.startswith("-e") else tok
+                    if (pat is not tok or not tok.startswith("-")) and _PERL_ESCAPE.search(pat):
+                        return ("git grep -E", pat)
+            continue
+        words = strip_prefixes(seg)
+        if words and program_name(words[0]) == "sed":
+            for tok in words[1:]:
+                if not tok.startswith("-") and _PERL_ESCAPE.search(tok):
+                    return ("sed", tok)
     return None
 
 
 def build_message(command, background=False):
     zsh = tool_shell() == "zsh"
+    posix_esc = posix_escape_no_match(command)
     pipeline = status_after_pipe(command)
     colon_mod = zsh_colon_modifier(command) if zsh else None
     no_split = zsh_no_split(command) if zsh else None
@@ -719,9 +836,11 @@ def build_message(command, background=False):
     redirect_chain = redirect_then_display(command, background)
     detached = detached_work(command)
     writer = writer_into_tail(command)
+    cut_list = cut_failure_list(command)
     if (not pipeline and not timeout_seg and not bg_pipeline and not colon_mod
-            and not no_split
-            and not codex_seg and not redirect_chain and not detached and not writer):
+            and not no_split and not posix_esc
+            and not codex_seg and not redirect_chain and not detached and not writer
+            and not cut_list):
         return None
 
     parts = ["SHELL-STATUS WARNING (not blocked, proceed if intended):"]
@@ -841,6 +960,18 @@ def build_message(command, background=False):
             % no_split[:160]
         )
 
+    if posix_esc:
+        parts.append(
+            "\n  `%s` uses POSIX regex here, where \\b \\s \\w \\d match NOTHING (they\n"
+            "  are not word boundary, space, word or digit). The search then finds\n"
+            "  nothing, and nothing reads exactly like \"clean\".\n\n"
+            "    the pattern : %s\n\n"
+            "  Use `git grep -P` (or plain `grep -E`, which handles them), or POSIX\n"
+            "  classes: [[:space:]] [[:digit:]] [[:alnum:]_]. For sed, use python3.\n"
+            "  Add a control row that must match, so a dead pattern shows as 0 there.\n"
+            % (posix_esc[0], posix_esc[1][:160])
+        )
+
     if colon_mod:
         parts.append(
             "\n  zsh reads `$NAME:<letter>` as a HISTORY MODIFIER on NAME, even inside\n"
@@ -869,11 +1000,67 @@ def build_message(command, background=False):
             % codex_seg[:160]
         )
 
+    if cut_list:
+        parts.append(
+            "\n  This cuts a list of FAILURES with head/tail, so it shows only some\n"
+            "  of them and the rest are never seen.\n\n"
+            "    the pipeline : %s\n\n"
+            "  Read the suite's own count line (`FAILED (failures=N)`) and print\n"
+            "  EVERY failure name, or count with `grep -c` first: a `| head` can show\n"
+            "  10 of 11 failures and hide the 11th."
+            % cut_list[:160]
+        )
+
     parts.append(
         "\n  Bypass with %s appended unquoted, or CLAUDE_ALLOW_SHELL_STATUS=1.\n"
         "  Never put that marker in a command a person will run." % BYPASS_MARKER
     )
     return "\n".join(parts)
+
+
+def _strings(value):
+    """Every string inside a tool response, at any depth."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for v in value.values():
+            yield from _strings(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _strings(v)
+
+
+def moved_to_background(response):
+    """True when the harness moved a FOREGROUND call to the background at its timeout.
+
+    The structured result carries `timedOutAfterMs` beside a `backgroundTaskId`; a call
+    started with run_in_background carries only the id (read from a session transcript's
+    toolUseResult). The visible text is the fallback shape.
+    """
+    if isinstance(response, dict) and response.get("timedOutAfterMs") and response.get("backgroundTaskId"):
+        return True
+    return any("did not complete within" in s and "moved to the background" in s
+               for s in _strings(response))
+
+
+def moved_call_message(command, response):
+    """The after-call warning for a moved call whose last clause is not the work, or None."""
+    if not moved_to_background(response):
+        return None
+    chain = redirect_then_display(command, True)
+    if not chain:
+        return None
+    return (
+        "SHELL-STATUS WARNING (after the call): this call outlived its timeout, so the\n"
+        "harness moved it to the background. Its finish notice will report the status of the\n"
+        "LAST clause, and here the last clause is not the work:\n\n"
+        "    the work      : %s\n"
+        "    the call ends : %s\n\n"
+        "  So an exit code of 0 in that notice says nothing about the run. When it finishes,\n"
+        "  read the work's own log or output file for the real result. Next time, end the\n"
+        "  command on the work itself, or start it with run_in_background and a log file.\n"
+        % (chain if len(chain) <= 300 else "..." + chain[-300:],
+           command.strip() if len(command.strip()) <= 120 else "..." + command.strip()[-120:]))
 
 
 def main():
@@ -885,6 +1072,14 @@ def main():
     if not command:
         return 0
     if BYPASS_MARKER in command or os.environ.get("CLAUDE_ALLOW_SHELL_STATUS") == "1":
+        return 0
+
+    if payload.get("hook_event_name") == "PostToolUse":
+        message = moved_call_message(command, payload.get("tool_response"))
+        if message:
+            json.dump({"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                              "additionalContext": message}}, sys.stdout)
+            sys.stdout.write("\n")
         return 0
 
     loop = self_matching_wait(command)

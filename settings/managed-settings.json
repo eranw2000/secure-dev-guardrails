@@ -29,6 +29,12 @@
           { "type": "command", "command": "/usr/local/share/secure-dev-guardrails/hooks/sensitive-file-context.sh" },
           { "type": "command", "command": "/usr/local/share/secure-dev-guardrails/hooks/dangerous-pattern-warn.sh" }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 /usr/local/share/secure-dev-guardrails/hooks/shell-status-guard.py" }
+        ]
       }
     ]
   }

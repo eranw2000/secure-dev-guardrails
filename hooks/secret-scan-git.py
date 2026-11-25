@@ -430,302 +430,29 @@ def _strip_redirections(args):
     return out
 
 
-# A `$NAME`, `${NAME}` or `${NAME%suffix}` reference. Anything else that starts
-# with `$` (`$(...)`, `$1`, `${#x}`, `${x/a/b}`) is left in the text, and a `$`
-# left in the text means the word cannot be read.
-_VAR_REF_RE = re.compile(
-    r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(%{1,2}[^}]*)?\}|([A-Za-z_][A-Za-z0-9_]*))"
-)
-# The words in front of an assignment that still make it a shell variable.
-_DECLARE_WORDS = ("export", "declare", "typeset", "local", "readonly")
-# Words that open a block and can sit in front of the first command in it.
+# Words in front of a statement that only opens a block or declares a name.
 _BLOCK_WORDS = ("do", "then", "else", "elif", "if", "while", "until", "!", "{")
-# Inside the block their opener started, so they do not change its depth.
-_INNER_WORDS = ("do", "then", "else", "elif", "!")
-_OPEN_WORDS = ("if", "while", "until", "case", "for", "{", "function")
-_CLOSE_WORDS = ("fi", "done", "esac", "}")
-# Commands that can write any variable, so nothing is known after one runs.
-_OPAQUE_WORDS = ("eval", "source", ".", "mapfile", "readarray", "getopts")
-# A shell variable whose value this parse does not know.
-_UNKNOWN = object()
-# One operator out of a run the tokenizer grouped into one token (`);`, `()`).
-_OP_PIECE_RE = re.compile(r"&&|\|\||;;|[()|&;\n]")
-_ANY_WRITE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\+?=")
-# The only mktemp form that is read: `-d` and at most one plain template.
-_MKTEMP_RE = re.compile(r"\$\(mktemp -d(?: ((?!-)[^\s()`$;|&<>\"'*?\[{]+))?\)")
+_DECLARE_WORDS = ("export", "declare", "typeset", "local", "readonly")
+# A word holding one of these names no one folder the scan can read: a variable or a
+# substitution, or a pattern the shell would expand.
+_NOT_A_LITERAL_FOLDER = "$`*?[{"
 
 
-def _shell_plan(text, outer_written=()):
-    """Which variables this text sets to a value the hook can trust. One pass, one rule.
-
-    A variable is trusted only when ALL of this holds, and every other variable
-    is unread, so a git call in its folder is refused rather than scanned in a
-    guess:
-      1. the text writes that name exactly once (`=`, `+=`, `for`, `read`, `unset`),
-      2. the write is a plain `NAME=value` or `for NAME in a b` with a list,
-      3. it runs for certain and in this shell: not inside a block, a subshell or
-         a function, not after `&&`, `||` or a pipe in its statement, not piped or
-         backgrounded itself.
-
-    `for` is the one block allowed, and only for its own variable: an assignment
-    in the loop body is rule 3.
-
-    `fresh` holds a trusted `NAME=$(mktemp -d [template])` with the folder it is
-    made IN: the new folder holds nothing when this hook runs, and a git call there
-    works on the repository around it, if there is one. A parent outside any
-    repository is skipped, the verdict a literal new path gets.
-    """
-    p = _parser()
-    tokens = []
-    for tok in p.tokenize(text):
-        if tok and all(c in "()|&;\n" for c in tok):
-            tokens.extend(_OP_PIECE_RE.findall(tok))
-        else:
-            tokens.append(tok)
-
-    written = {}
-    candidates = {}
-    state = {"block": 0, "paren": 0, "clean": True, "opaque": False}
-    part = []
-
-    def note(name):
-        written[name] = written.get(name, 0) + 1
-
-    def close_part(end):
-        words = list(part)
-        del part[:]
-        while words and words[0] in _INNER_WORDS:
-            words.pop(0)
-        if not words:
-            return
-        head = words[0]
-        # The command itself, behind any word that opens a block around it, so
-        # `while read d` is a read and `if source x` is a source.
-        cmd = list(words)
-        while cmd and cmd[0] in _BLOCK_WORDS:
-            cmd.pop(0)
-        verb, names_after = (cmd[0], cmd[1:]) if cmd else ("", [])
-        # A write is a word at the FRONT of a command, or a declare word's argument.
-        # `echo D=$D` writes nothing.
-        for word in (names_after if verb in _DECLARE_WORDS else cmd):
-            m = _ANY_WRITE_RE.match(word)
-            if m:
-                note(m.group(1))
-            elif verb not in _DECLARE_WORDS:
-                break
-        if verb == "for" and names_after:
-            note(names_after[0])
-        elif verb in ("read", "unset"):
-            for word in names_after:
-                if not word.startswith("-"):
-                    note(word)
-            if verb == "read":
-                note("REPLY")
-        elif verb == "printf" and "-v" in names_after[:-1]:
-            note(names_after[names_after.index("-v") + 1])
-        elif verb in _OPAQUE_WORDS:
-            state["opaque"] = True
-        certain = (not state["block"] and not state["paren"]
-                   and state["clean"] and end not in ("|", "&"))
-        if certain:
-            if head == "for":
-                if len(words) > 3 and words[2] == "in":
-                    candidates[words[1]] = None
-            else:
-                rest = words
-                if head in _DECLARE_WORDS:
-                    rest = [w for w in words[1:] if not w.startswith("-")]
-                if rest and all(p.ENV_ASSIGN.match(w) for w in rest):
-                    for word in rest:
-                        name, value = word.split("=", 1)
-                        if value:
-                            candidates[name] = value
-        if head in _OPEN_WORDS:
-            state["block"] += 1
-        elif head in _CLOSE_WORDS and state["block"]:
-            state["block"] -= 1
-
-    i = 0
-    while i < len(tokens):
-        tok = tokens[i]
-        i += 1
-        if tok == "(" and part and part[-1].endswith("$"):
-            # A command substitution stays one word of the statement around it.
-            depth, inner = 1, []
-            while i < len(tokens) and depth:
-                depth += {"(": 1, ")": -1}.get(tokens[i], 0)
-                if depth:
-                    inner.append(tokens[i])
-                i += 1
-            part[-1] += "(%s)" % " ".join(inner)
-        elif tok == "(":
-            close_part(tok)
-            state["paren"] += 1
-        elif tok == ")":
-            close_part(tok)
-            if state["paren"]:
-                state["paren"] -= 1
-        elif tok in (";", "\n", ";;"):
-            close_part(tok)
-            state["clean"] = True
-        elif tok in ("&&", "||", "|", "&"):
-            close_part(tok)
-            state["clean"] = False
-        else:
-            part.append(tok)
-    close_part(";")
-
-    trusted = {name for name in candidates if written.get(name) == 1}
-    fresh = {}
-    for name in trusted:
-        m = _MKTEMP_RE.fullmatch(candidates[name] or "")
-        if m and m.group(1):
-            fresh[name] = os.path.dirname(m.group(1)) or "."
-        elif m and "TMPDIR" not in written:
-            fresh[name] = os.environ.get("TMPDIR") or "/tmp"
-    return {
-        "trusted": trusted,
-        "fresh": fresh,
-        "written": set(written) | set(outer_written),
-        "opaque": state["opaque"],
-        "single_quoted": _single_quoted_vars(text),
-    }
+def _literal_folder(word):
+    """True when `word` is a folder written out, so the scan can name what git acts on."""
+    return not any(ch in word for ch in _NOT_A_LITERAL_FOLDER)
 
 
-def _single_quoted_vars(text):
-    """What this text holds in shell single quotes with a `$` inside.
-
-    The tokenizer drops quotes, so `git -C '$W' push` looks like a variable. A single
-    quote inside double quotes (`python3 -c "x='$S'"`) is not one, and there the
-    shell does expand `$S`, so this walks the quoting rather than matching text.
-    """
-    found = []
-    quote = None
-    start = 0
-    i = 0
-    while i < len(text):
-        ch = text[i]
-        if ch == "\\" and quote != "'":
-            i += 2
-            continue
-        if quote is None and ch in "'\"":
-            quote, start = ch, i + 1
-        elif ch == quote:
-            if quote == "'" and "$" in text[start:i]:
-                found.append(text[start:i])
-            quote = None
-        i += 1
-    return found
-
-
-def _var_values(name, shell_vars, plan, here):
-    """Every value variable `name` can hold here, or None when it is not known.
-
-    A variable this text set for certain wins. A name written anywhere else (later
-    in this text, in an outer shell, in a skipped branch) is unknown. Otherwise the
-    value is taken from the environment this hook runs in. PWD is the
-    shell's own folder, which this parse tracks itself. A name found nowhere is
-    unknown, never empty: an unknown folder is not a clean one.
-    """
-    if plan["opaque"]:
-        return None
-    if name in shell_vars:
-        value = shell_vars[name]
-        return None if value is _UNKNOWN else list(value)
-    if name in plan["written"]:
-        return None
-    if name == "PWD":
-        return [here] if here else None
-    if name == "OLDPWD" or name not in os.environ:
-        return None
-    return [os.environ[name]]
-
-
-def _expand_word(word, shell_vars, plan, here):
-    """Every text `word` can expand to, or None when it cannot be read.
-
-    More than one text comes back only when a `for` loop variable is in it. Quotes
-    are gone by now, so a word the text wrote in single quotes is refused rather
-    than read as a variable. A value holding a space, a glob or a brace can stand for
-    several folders, so none of them is read.
-    """
-    if any(quoted in word for quoted in plan["single_quoted"]):
-        return None
-    results = [""]
-    pos = 0
-    literal = []
-    for m in _VAR_REF_RE.finditer(word):
-        lit = word[pos:m.start()]
-        literal.append(lit)
-        name = m.group(1) or m.group(3)
-        values = _var_values(name, shell_vars, plan, here)
-        if values is None or any(ch.isspace() for v in values for ch in v):
-            return None
-        if name in plan["fresh"] and "/.." in word:
-            return None
-        suffix = m.group(2)
-        if suffix:
-            pattern = suffix.lstrip("%")
-            if any(ch in pattern for ch in "*?[]\\$"):
-                return None
-            values = [v[:-len(pattern)] if pattern and v.endswith(pattern) else v for v in values]
-        results = [r + lit + v for r in results for v in values]
-        pos = m.end()
-    literal.append(word[pos:])
-    if any("$" in lit or "`" in lit for lit in literal):
-        return None
-    results = [r + word[pos:] for r in results]
-    if any(ch in r for r in results for ch in "*?[{"):
-        return None
-    return results
-
-
-def _note_shell_vars(tokens, shell_vars, plan, here):
-    """Give a trusted variable its value at the point the command sets it.
-
-    Returns True when the segment only sets variables, so there is nothing else in
-    it to read. A name the plan does not trust stays unknown, and a use BEFORE this
-    point is unknown too, since the name is not in `shell_vars` yet.
-    """
+def _sets_only(tokens):
+    """True when the segment holds no command to read: only assignments, or a `for` line."""
     toks = list(tokens)
     while toks and toks[0] in _BLOCK_WORDS:
         toks = toks[1:]
-    if not toks:
+    if not toks or toks[0] == "for":
         return True
-    p = _parser()
-    head = toks[0]
-    if head == "for":
-        if len(toks) >= 2 and toks[1] in plan["trusted"]:
-            values = []
-            for w in toks[3:]:
-                expanded = _expand_word(w, shell_vars, plan, here)
-                if expanded is None:
-                    values = _UNKNOWN
-                    break
-                values.extend(expanded)
-            shell_vars[toks[1]] = values
-        elif len(toks) >= 2:
-            shell_vars[toks[1]] = _UNKNOWN
-        return True
-    if head in _DECLARE_WORDS:
+    if toks[0] in _DECLARE_WORDS:
         toks = [t for t in toks[1:] if not t.startswith("-")]
-        if not toks:
-            return True
-    if not all(p.ENV_ASSIGN.match(t) for t in toks):
-        return False
-    for t in toks:
-        name, value = t.split("=", 1)
-        if name in plan["fresh"]:
-            shell_vars[name] = [plan["fresh"][name]]
-        elif name not in plan["trusted"]:
-            shell_vars[name] = _UNKNOWN
-        else:
-            expanded = _expand_word(value, shell_vars, plan, here)
-            if expanded is None:
-                shell_vars[name] = _UNKNOWN
-            else:
-                shell_vars[name] = [os.path.expanduser(v) for v in expanded]
-    return True
+    return all(_parser().ENV_ASSIGN.match(t) for t in toks)
 
 
 def _git_calls(command, cwd, wanted, ignore_cd=False):
@@ -747,17 +474,14 @@ def _git_calls(command, cwd, wanted, ignore_cd=False):
 
     def unread(subcommand, word):
         return (
-            "a git %s in a folder named by a variable this scan cannot read (%s)"
+            "a git %s in a folder named by a variable or a pattern (%s). This scan reads only a "
+            "folder written out, so put the real path in the command"
             % (subcommand, _safe(word))
         )
 
-    def walk(text, here, depth=0, outer_written=()):
-        # `here` is None once a `cd` went into a folder this parse cannot read,
-        # and stays None until a `cd` to a folder it can read. A nested shell gets
-        # no variables from its parent: only exported ones reach it, and a double
-        # quoted string expands before it starts, so any name the parent wrote is
-        # unknown inside it.
-        shell_vars = {}
+    def walk(text, here, depth=0):
+        # `here` is None once a `cd` went into a folder that is not written out, and
+        # stays None until a `cd` to a folder that is.
         if depth > 3:
             # Out of nesting budget with text still to run. Unknown is not clean.
             for m in LOOKS_LIKE_GIT_RE.finditer(text):
@@ -783,26 +507,24 @@ def _git_calls(command, cwd, wanted, ignore_cd=False):
         # that one is genuinely unreadable (nested quotes inside `$( )`).
         try:
             segments = p.command_segments(text)
-            plan = _shell_plan(p.strip_heredocs(text)[0], outer_written)
         except p.UnparseableCommand as exc:
             raise Unparseable(str(exc))
         for tokens in segments:
             nested = p.nested_shell_command(tokens)
             if nested:
-                walk(nested, here, depth + 1, plan["written"])
+                walk(nested, here, depth + 1)
                 continue
-            if _note_shell_vars(tokens, shell_vars, plan, here):
+            if _sets_only(tokens):
                 continue
             target = p.cd_target(tokens)
             if target:
                 if not ignore_cd:
-                    # One folder or nothing: a cd into a loop variable's values
-                    # is several folders at once, so it counts as a folder not read.
-                    expanded = _expand_word(target, shell_vars, plan, here)
-                    if expanded is None or len(expanded) != 1:
+                    # A flag comes back as the target (`cd -- x`, `cd -P x`), and `cd -` is
+                    # the last folder, so none of them names a folder written out.
+                    if target.startswith("-") or not _literal_folder(target):
                         here = None
                     else:
-                        target = os.path.expanduser(expanded[0])
+                        target = os.path.expanduser(target)
                         if os.path.isabs(target):
                             here = target
                         elif here is not None:
@@ -831,40 +553,33 @@ def _git_calls(command, cwd, wanted, ignore_cd=False):
             sub = call["subcommand"]
             if call["dash_c"] and not env_moved:
                 # Each relative -C applies to the directory before it, starting
-                # from the shell's own directory, never this process's. A loop
-                # variable gives one repository per value, each scanned.
-                repos, shape = [here], None
+                # from the shell's own directory, never this process's.
+                repo, shape = here, None
                 for c in call.get("dash_c_all") or [call["dash_c"]]:
-                    values = _expand_word(c, shell_vars, plan, here)
-                    if values is None:
-                        repos, shape = [None], unread(sub, c)
+                    if not _literal_folder(c):
+                        repo, shape = None, unread(sub, c)
                         break
-                    nxt = []
-                    for r in repos:
-                        for v in values:
-                            v = os.path.expanduser(v)
-                            nxt.append(v if os.path.isabs(v) else (None if r is None else os.path.join(r, v)))
-                    repos = nxt
-                if shape is None and None in repos:
-                    repos, shape = [None], unread(sub, "cd")
+                    v = os.path.expanduser(c)
+                    repo = v if os.path.isabs(v) else (None if repo is None else os.path.join(repo, v))
+                if shape is None and repo is None:
+                    shape = unread(sub, "cd")
             elif call["explicit_target"] or env_moved:
-                repos = [None]
+                repo = None
                 shape = (
                     "a git %s whose repository is named by --git-dir, "
                     "--work-tree or a GIT_DIR= prefix, which this scan does "
                     "not resolve" % sub
                 )
             elif here is None:
-                repos, shape = [None], unread(sub, "cd")
+                repo, shape = None, unread(sub, "cd")
             else:
-                repos, shape = [here], None
-            for repo in dict.fromkeys(repos):
-                out.append({
-                    "subcommand": sub,
-                    "repo": repo,
-                    "args": _strip_redirections(call["args"]),
-                    "shape": shape,
-                })
+                repo, shape = here, None
+            out.append({
+                "subcommand": sub,
+                "repo": repo,
+                "args": _strip_redirections(call["args"]),
+                "shape": shape,
+            })
         return here
 
     walk(command, cwd)
@@ -1617,11 +1332,14 @@ def main():
             parts.append("")
             parts.extend(notes)
         parts.append("")
-        parts.append(
-            "Fix the scanner, or re-run once it works. This hook blocks rather than "
-            "warning because a leaked credential is not recoverable by rerunning "
-            "anything."
-        )
+        if all("put the real path" in e for e in errors):
+            parts.append("Nothing is wrong with the scanner. Retype the command with the real path.")
+        else:
+            parts.append(
+                "Fix the scanner, or re-run once it works. This hook blocks rather than "
+                "warning because a leaked credential is not recoverable by rerunning "
+                "anything."
+            )
 
     sys.stderr.write("\n".join(parts) + "\n")
     return 2
